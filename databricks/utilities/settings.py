@@ -1,12 +1,11 @@
 # Databricks notebook source
 # 
-# The following code provides project-level constants as
-# part of the ML Workshop 2022 project
-#  
-
+# Databricks notebook source
+# This file contains constants used for the workshop!
+# You can (and should) change them for your own experiments, but they are uniquely defined
+# here for constants that we will use together.
 
 # COMMAND ----------
-
 # this code chunk defines a custom logging function
 from os import environ
 IS_DATABRICKS = "DATABRICKS_RUNTIME_VERSION" in environ
@@ -34,8 +33,10 @@ def fn_log(str_print):   # place holder for logging
     logger.info(str_print)
     print(str_print)
 
-
 # COMMAND ----------
+
+# This is utility code to detect the current user.  It works on the AIaaS cluster to detecct the user ATTID
+# which is often the defauly location for new notebooks, repos, etc.
 
 # template for reference, please add specific values value
 try:
@@ -75,18 +76,16 @@ except Exception as e:
     CREDENTIALS['paths'] = {'notebooks': f'/Users/{USER_PATH}', 'repos': f'/Repos/{USER_PATH}', 
                             'user': f"/user/{CREDENTIALS['credentials']['ATTID']}" }
 
+def is_workshop_admin():
+    return CREDENTIALS['credentials']['ATTID'] in ['ez2685']
 
 # COMMAND ----------
 
-# legaccy function
-def get_creds():
-    """function to return current user"""
-    # spark.conf.set("spark.databricks.userInfoFunctions.enabled", "true")
-    # USER_PATH = spark.sql('select current_user() as user;').collect()[0]['user']
-    # ATTID = USER_PATH.split('@')[0]
-    # UPSTART_PWD = dbutils.secrets.get(scope=f'dsair-{ATTID}-scope', key=f'{ATTID}-upstart')
-    print("... Legacy function `get_creds` please update your code to use the project constants file!")
-    return CREDENTIALS['credentials']['ATTID'], CREDENTIALS['credentials']['UPSTART']
+def quiet_delete(path_storage):
+    try:
+        dbutils.fs.rm(path_storage, True)   # recursively delete what was there before
+    except Excpetion as e:
+        fn_log(f"Error clearing parititon '{path_storage}', maybe it didn't exist...")
 
 
 # COMMAND ----------
@@ -98,55 +97,45 @@ CREDENTIALS['paths'].update({
   'experiments': f"{CREDENTIALS['paths']['user']}/experiments",
 })
 
+
+# the last command assumes you make a scratch directory that you own (or can write to) with your ATTID
+# for instructions on how to create your own scratch, head to notebook `1b_DATA_WRITE_EXAMPLES`
+if dt.datetime.now() > dt.datetime(month=10, year=2022, day=21):     # the shared scratch will be disabled after Oct 21
+    CREDENTIALS['paths'].update({'scratch_root', f"abfss://{USER_ID}@STORAGE"}
+
+# No time to make your own scratch? no problem, you can use the temp container created for the workshop.
+# NOTE: this container will be deactivated within a week or so of the workshop!
+else:
+    CREDENTIALS['paths'].update({'scratch_root', f"abfss://mlworkshop2022-writeable@STORAGE/{USER_ID}"})
+
 # define constants and reusable strings here
 CREDENTIALS['paths'].update({
-    'databricks_dataset': "abfss://dsair-geo-loc-fencing@dsairgeneraleastus2sa.STORAGE",
+    'databricks_dataset': "abfss://mlworkshop2022@STORAGE",
     # map mapping for enc/dec
     'msp_records': "abfss://msp@datalakeeastus2prd.STORAGE/msp_nation_aggregate_final",
     'msp_mapping': "abfss://msp-mapping@datalakeeastus2prd.STORAGE/msp_nation_aggregate_final_dlmapping",
     'scamp_data': "abfss://scamp-att@datalakeeastus2prd.STORAGE/scamp_awsd_att",
-    'scamp_sms': "abfss://scamp-att@datalakeeastus2prd.STORAGE/scamp_smsd_att",
-    'clnph': "abfss://dsair-geo-loc-fencing@dsairgeneraleastus2sa.STORAGE/closenuph",
-    'cssng': "abfss://cssng@datalakeeastus2prd.STORAGE/ss_site_master",
 })
 CREDENTIALS['paths'].update({
-    'clnph_bronze': f"{CREDENTIALS['paths']['databricks_dataset']}/closenuph",
-    'locstore_bronze': f"{CREDENTIALS['paths']['databricks_dataset']}/locstore",
-    #'msdin_bronze': f"{CREDENTIALS['paths']['databricks_dataset']}/msisdn_dec",  # typo, can be deleted? (TO BE DELETED....)
-    #'msisdn_decode': f"{CREDENTIALS['paths']['databricks_dataset']}/msisdn_dec",   # (TO BE DELETED....)
-    'events': f"{CREDENTIALS['paths']['databricks_dataset']}/events",  # set of known events
-    #'present_bronze': f"{CREDENTIALS['paths']['databricks_dataset']}/present",   # TO BE DELETED....
-    'fanshed_bronze': f"{CREDENTIALS['paths']['databricks_dataset']}/fanbehavior",
-    # paths for pipeline (started 4/28)
-    'present_parsed': f"{CREDENTIALS['paths']['databricks_dataset']}/present_parsed",  # parsed input event data
-    #'present_cohorts': f"{CREDENTIALS['paths']['databricks_dataset']}/present_cohorts",  # filtered imsis  (TO BE DELETED 8/7, is it still used?)
-    'present_optin_imei': f"{CREDENTIALS['paths']['databricks_dataset']}/present_optin",  # filtered + opt-in + imei
-    'location_optin_msisdn': f"{CREDENTIALS['paths']['databricks_dataset']}/location_optin",  # filtered + opt-in + location
-    'geofence_laccids': f"{CREDENTIALS['paths']['databricks_dataset']}/geofence_laccids",   # CSV for laccids (to be update?)
-
-    # fixed or other individual data stores (used sparingly)
-    'project_scratch': f"{CREDENTIALS['paths']['databricks_dataset']}/scratch/{CREDENTIALS['credentials']['ATTID']}",    
-    'geojson_combined': f"{CREDENTIALS['paths']['databricks_dataset']}/geojson/combined",
     # we may delete this set in future? seems to be similar to 'present' and has team-specific encoding ? 
-    'present_fan_bronze': f"{CREDENTIALS['paths']['databricks_dataset']}/TBLfans",    #can we delete this?
-    'fan_pictures': f"{CREDENTIALS['paths']['databricks_dataset']}/fanbehavior/pictures",
 })
 
 # need to have time constants restructed?
 import datetime as dt
 dt_now_month = dt.datetime(year=dt.datetime.now().year, month=dt.datetime.now().month, day=1)
 CREDENTIALS['constants'].update({
+    'MLFLOW_EXPERIMENT': "MLWorkshop2022",
+    # this may not work for sure, but let's try to format an Azure Portal for above...
+    'SCRATCH_URL': f"https://PORTAL/#blade/Microsoft_Azure_Storage/ContainerMenuBlade/overview/storageAccountId/%2Fsubscriptions%2F81b4ec93-f52f-4194-9ad9-57e636bcd0b6%2FresourceGroups%2Fblackbird-prod-storage-rg%2Fproviders%2FMicrosoft.Storage%2FstorageAccounts%2Fblackbirdproddatastore/path/{USER_ID}/etag/%220x8D9766DE75EA338%22/defaultEncryptionScope/%24account-encryption-key/denyEncryptionScopeOverride//defaultId//publicAccessVal/None",
     'TIME_SAMPLING_LIMITS': {
         "last_year": {'dt_start': dt.datetime(year=dt_now_month.year-1, month=1, day=1), 
                       'dt_end': dt.datetime(year=dt_now_month.year-1, month=12, day=31) },
         "last_month": {'dt_start': dt.datetime(year=dt_now_month.year, month=(dt_now_month - dt.timedelta(days=1)).month, day=1), 
                       'dt_end': dt_now_month },
     },
-    'TIME_LOCATION_SHED_WINDOW': dt.timedelta(days=3),
-    'TIME_BROWSER_WINDOW': dt.timedelta(days=7),
-    'TIME_ATTEND_MIN_THRESHOLD': 60,
-    'TIME_DURATION_MIN_THRESHOLD': 390,
+
 })
+
 
 
 
