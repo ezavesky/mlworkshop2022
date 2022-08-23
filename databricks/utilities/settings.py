@@ -1,11 +1,11 @@
 # Databricks notebook source
 # 
-# Databricks notebook source
 # This file contains constants used for the workshop!
 # You can (and should) change them for your own experiments, but they are uniquely defined
 # here for constants that we will use together.
 
 # COMMAND ----------
+
 # this code chunk defines a custom logging function
 from os import environ
 IS_DATABRICKS = "DATABRICKS_RUNTIME_VERSION" in environ
@@ -58,14 +58,25 @@ except Exception as e:
     CREDENTIALS['credentials']['ATTID'] = USER_PATH.split('@')[0]
     fn_log(f"Detected User ID: {CREDENTIALS['credentials']['ATTID']}")
 
-    # tokens for UPSTART
+    # tokens for UPSTART + FEATURE STORE
+    # this is an example of using secrets; it's an "advanced" topic (https://wiki.SERVICE_SITE/x/2gpiWQ), 
+    # but your cluster admin should probably do this for you.  don't have one? just here for fun?
+    # NO PROBLEM!  Just update the two settings below and delete the comments.
+    # JUST REMEMBER... never check in or share your code with these credentials set!
     try:
         CREDENTIALS['credentials']['UPSTART'] = dbutils.secrets.get(
             scope=f"dsair-{CREDENTIALS['credentials']['ATTID']}-scope", 
             key=f"{CREDENTIALS['credentials']['ATTID']}-upstart")
+        CREDENTIALS['credentials']['ATLANTIS'] = dbutils.secrets.get(
+            scope=f"dsair-{CREDENTIALS['credentials']['ATTID']}-scope", 
+            key=f"{CREDENTIALS['credentials']['ATTID']}-atlantis")
     except Exception as e:
+        CREDENTIALS['credentials']['UPSTART'] = "your own password"
+        CREDENTIALS['credentials']['ATLANTIS'] = "your own token"
+
+        # you can hide these complaints when you add your PW here
         fn_log(f"Could not load UPSTART credentials for ATTID {CREDENTIALS['credentials']['ATTID']}...")
-        fn_log(f"This will prevent direct reads from terradata (eCDW) and Snowflake sources.")
+        fn_log(f"This will prevent direct reads from Snowflake sources.")
         fn_log(f"Not what you expected? Check out `utilities/settings.py` for remediations.")
         fn_log(f"Here's the actual error: {e}.")
 
@@ -90,6 +101,8 @@ def quiet_delete(path_storage):
 
 # COMMAND ----------
 
+import datetime as dt
+
 # okay to always update these lines because they cost no compute
 
 # update for the local paths
@@ -101,12 +114,12 @@ CREDENTIALS['paths'].update({
 # the last command assumes you make a scratch directory that you own (or can write to) with your ATTID
 # for instructions on how to create your own scratch, head to notebook `1b_DATA_WRITE_EXAMPLES`
 if dt.datetime.now() > dt.datetime(month=10, year=2022, day=21):     # the shared scratch will be disabled after Oct 21
-    CREDENTIALS['paths'].update({'scratch_root', f"abfss://{USER_ID}@STORAGE"}
+    CREDENTIALS['paths'].update({'scratch_root': f"abfss://{CREDENTIALS['credentials']['ATTID']}@STORAGE"})
 
 # No time to make your own scratch? no problem, you can use the temp container created for the workshop.
 # NOTE: this container will be deactivated within a week or so of the workshop!
 else:
-    CREDENTIALS['paths'].update({'scratch_root', f"abfss://mlworkshop2022-writeable@STORAGE/{USER_ID}"})
+    CREDENTIALS['paths'].update({'scratch_root': f"abfss://mlworkshop2022-writeable@STORAGE/{CREDENTIALS['credentials']['ATTID']}"})
 
 # define constants and reusable strings here
 CREDENTIALS['paths'].update({
@@ -121,12 +134,11 @@ CREDENTIALS['paths'].update({
 })
 
 # need to have time constants restructed?
-import datetime as dt
 dt_now_month = dt.datetime(year=dt.datetime.now().year, month=dt.datetime.now().month, day=1)
 CREDENTIALS['constants'].update({
     'MLFLOW_EXPERIMENT': "MLWorkshop2022",
     # this may not work for sure, but let's try to format an Azure Portal for above...
-    'SCRATCH_URL': f"https://PORTAL/#blade/Microsoft_Azure_Storage/ContainerMenuBlade/overview/storageAccountId/%2Fsubscriptions%2F81b4ec93-f52f-4194-9ad9-57e636bcd0b6%2FresourceGroups%2Fblackbird-prod-storage-rg%2Fproviders%2FMicrosoft.Storage%2FstorageAccounts%2Fblackbirdproddatastore/path/{USER_ID}/etag/%220x8D9766DE75EA338%22/defaultEncryptionScope/%24account-encryption-key/denyEncryptionScopeOverride//defaultId//publicAccessVal/None",
+    'SCRATCH_URL': f"https://PORTAL/#view/Microsoft_Azure_Storage/ContainerMenuBlade/~/overview/storageAccountId/%2Fsubscriptions%2F81b4ec93-f52f-4194-9ad9-57e636bcd0b6%2FresourceGroups%2Fblackbird-prod-storage-rg%2Fproviders%2FMicrosoft.Storage%2FstorageAccounts%2Fblackbirdproddatastore/path/mlworkshop2022/etag/%220x8DA82A21AA0D1FA%22/defaultEncryptionScope/%24account-encryption-key/denyEncryptionScopeOverride~/false/defaultId//publicAccessVal/None",
     'TIME_SAMPLING_LIMITS': {
         "last_year": {'dt_start': dt.datetime(year=dt_now_month.year-1, month=1, day=1), 
                       'dt_end': dt.datetime(year=dt_now_month.year-1, month=12, day=31) },
