@@ -123,14 +123,27 @@ else:
 
 # define constants and reusable strings here
 CREDENTIALS['paths'].update({
-    'databricks_dataset': "abfss://mlworkshop2022@STORAGE",
-    # map mapping for enc/dec
-    'msp_records': "abfss://msp@datalakeeastus2prd.STORAGE/msp_nation_aggregate_final",
-    'msp_mapping': "abfss://msp-mapping@datalakeeastus2prd.STORAGE/msp_nation_aggregate_final_dlmapping",
-    'scamp_data': "abfss://scamp-att@datalakeeastus2prd.STORAGE/scamp_awsd_att",
+    'databricks_dataset': "abfss://mlworkshop2022@dsairgeneraleastus2sa.STORAGE", # "abfss://mlworkshop2022@STORAGE",
+    'geometry_base': "abfss://mlworkshop2022@dsairgeneraleastus2sa.STORAGE/tl_2021_us_zcta520/geometry", 
 })
 CREDENTIALS['paths'].update({
-    # we may delete this set in future? seems to be similar to 'present' and has team-specific encoding ? 
+    # datasets that we may consider joining
+    'geometry_zip': f"{CREDENTIALS['paths']['geometry_base']}/ztca",
+    #    zip code data from census - https://www2.census.gov/geo/tiger/TIGER2021/ZCTA520/
+    'geometry_dma': f"{CREDENTIALS['paths']['geometry_base']}/dma",
+    #    DMA shape data from neilsen archive - https://github.com/simzou/nielsen-dma
+    'geometry_state': f"{CREDENTIALS['paths']['geometry_base']}/state",
+    #    state shape data from census - https://www2.census.gov/geo/tiger/TIGER2021/STATE/
+    'geometry_county': f"{CREDENTIALS['paths']['geometry_base']}/county",
+    #    dataset for county - https://www2.census.gov/geo/tiger/TIGER2021/COUNTY/
+    'geometry_nyctaxi': f"{CREDENTIALS['paths']['geometry_base']}/nyctaxi_zones",
+    #    dataset for county - https://www2.census.gov/geo/tiger/TIGER2021/COUNTY/
+    'demographics_raw': f"{CREDENTIALS['paths']['databricks_dataset']}/demographics",
+    #    dataset of demographics from internal subset from AT&T vendor
+
+    # datasets that you may have created
+    'nyctaxi_raw': f"{CREDENTIALS['paths']['databricks_dataset']}/nyctaxi/tables/nyctaxi_yellow",
+    'nyctaxi_geo': f"{CREDENTIALS['paths']['databricks_dataset']}/experiment/nyctaxi_geo/",
 })
 
 # need to have time constants restructed?
