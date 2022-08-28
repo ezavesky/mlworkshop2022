@@ -1,4 +1,16 @@
 # Databricks notebook source
+# 
+# This file contains demographic feature retrieval functions used for the 
+#   2022 Machine Learning Workshop (part of the Software Symposium)!
+#   https://FORWARD_SITE/mlworkshop2022 
+#      OR https://INFO_SITE/cdo/events/internal-events/4354c5db-3d3d-4481-97c4-8ad8f12686f1
+#
+# You can (and should) change them for your own experiments, but they are uniquely defined
+# here for constants that we will use together.
+
+
+# COMMAND ----------
+
 # MAGIC %run ../utilities/settings
 
 # COMMAND ----------

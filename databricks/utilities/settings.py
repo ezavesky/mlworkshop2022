@@ -1,8 +1,13 @@
 # Databricks notebook source
 # 
-# This file contains constants used for the workshop!
+# This file contains settings utilities used for the 
+#   2022 Machine Learning Workshop (part of the Software Symposium)!
+#   https://FORWARD_SITE/mlworkshop2022 
+#      OR https://INFO_SITE/cdo/events/internal-events/4354c5db-3d3d-4481-97c4-8ad8f12686f1
+#
 # You can (and should) change them for your own experiments, but they are uniquely defined
 # here for constants that we will use together.
+
 
 # COMMAND ----------
 
@@ -137,19 +142,35 @@ CREDENTIALS['paths'].update({
     'geometry_county': f"{CREDENTIALS['paths']['geometry_base']}/county",
     #    dataset for county - https://www2.census.gov/geo/tiger/TIGER2021/COUNTY/
     'geometry_nyctaxi': f"{CREDENTIALS['paths']['geometry_base']}/nyctaxi_zones",
-    #    dataset for county - https://www2.census.gov/geo/tiger/TIGER2021/COUNTY/
+    #    dataset for nyc boroughs - https://data.cityofnewyork.us/Transportation/NYC-Taxi-Zones/d3c5-ddgc
     'demographics_raw': f"{CREDENTIALS['paths']['databricks_dataset']}/demographics",
     #    dataset of demographics from internal subset from AT&T vendor
 
     # datasets that you may have created
-    'nyctaxi_raw': f"{CREDENTIALS['paths']['databricks_dataset']}/nyctaxi/tables/nyctaxi_yellow",
-    'nyctaxi_geo': f"{CREDENTIALS['paths']['databricks_dataset']}/experiment/nyctaxi_geo/",
+    'nyctaxi_raw': f"{CREDENTIALS['paths']['databricks_dataset']}/nyctaxi/tables/nyctaxi_yellow",  # raw dataset
+    'nyctaxi_stats': f"{CREDENTIALS['paths']['databricks_dataset']}/experiment/nyctaxi_stats",   # overall stats
+    'nyctaxi_h3': f"{CREDENTIALS['paths']['databricks_dataset']}/experiment/nyctaxi_h3",   # encoded with h3
+    'nyctaxi_h3_sampled': f"{CREDENTIALS['paths']['databricks_dataset']}/experiment/nyctaxi_h3_sampled",  # subsampled with h3
+    'nyctaxi_h3_zips': f"{CREDENTIALS['paths']['databricks_dataset']}/experiment/nyctaxi_h3_zips",   # zip stat data
+    'nyctaxi_h3_zones': f"{CREDENTIALS['paths']['databricks_dataset']}/experiment/nyctaxi_h3_zones",   # zone stat data
+    'nyctaxi_geo_sampled': f"{CREDENTIALS['paths']['databricks_dataset']}/experiment/nyctaxi_geo_sampled",
 })
 
 # need to have time constants restructed?
 dt_now_month = dt.datetime(year=dt.datetime.now().year, month=dt.datetime.now().month, day=1)
 CREDENTIALS['constants'].update({
     'MLFLOW_EXPERIMENT': "MLWorkshop2022",
+    'EXPERIENCED_MODE': False,   # change this flag to run some processing in 'experienced' mode
+    'WORKSHOP_ADMIN_MODE': CREDENTIALS['credentials']['ATTID'] in ['ez2685'],
+    'DATA_SUBSAMPLE_RATIO': 0.03,   # from our raw data, grab only 3% for quicker demos in this workshop!
+
+    # our spatial mapping uses h3 cells (resolution 11?) - 
+    # see https://towardsdatascience.com/uber-h3-for-data-analysis-with-python-1e54acdcc908
+    #    according to h3 resolution - https://h3geo.org/docs/core-library/restable/#average-area-in-m2
+    #    resolution 11 is about 23138.565 square feet
+    #    resolution 10 (roughly a city block) is about 161970 square feet
+    'RESOLUTION_H3': 11,  
+    
     # this may not work for sure, but let's try to format an Azure Portal for above...
     'SCRATCH_URL': f"https://PORTAL/#view/Microsoft_Azure_Storage/ContainerMenuBlade/~/overview/storageAccountId/%2Fsubscriptions%2F81b4ec93-f52f-4194-9ad9-57e636bcd0b6%2FresourceGroups%2Fblackbird-prod-storage-rg%2Fproviders%2FMicrosoft.Storage%2FstorageAccounts%2Fblackbirdproddatastore/path/mlworkshop2022/etag/%220x8DA82A21AA0D1FA%22/defaultEncryptionScope/%24account-encryption-key/denyEncryptionScopeOverride~/false/defaultId//publicAccessVal/None",
     'TIME_SAMPLING_LIMITS': {

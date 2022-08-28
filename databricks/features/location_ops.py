@@ -1,5 +1,20 @@
 # Databricks notebook source
+# 
+# This file contains location hashing utilities used for the 
+#   2022 Machine Learning Workshop (part of the Software Symposium)!
+#   https://FORWARD_SITE/mlworkshop2022 
+#      OR https://INFO_SITE/cdo/events/internal-events/4354c5db-3d3d-4481-97c4-8ad8f12686f1
+#
+# You can (and should) change them for your own experiments, but they are uniquely defined
+# here for constants that we will use together.
+
+# COMMAND ----------
+
 # MAGIC %run ../utilities/settings
+
+# COMMAND ----------
+
+########## PLOTTING FUNCTIONS #################
 
 # COMMAND ----------
 
@@ -10,12 +25,6 @@ import matplotlib.pyplot as plt
 import math
 
 # COMMAND ----------
-
-def shape_resolution(gdf_src, resolution_target):
-    pass
-    
-    
-
 
 #helper to demonstrate the different resolutions
 def shape_plot_example(gdf_example=None, res_compare=[7, 9, 11], col_viz=None):
@@ -66,36 +75,104 @@ def shape_plot_example(gdf_example=None, res_compare=[7, 9, 11], col_viz=None):
 # COMMAND ----------
 
 # helper to demonstrate simple plot of  amap...
-def shape_plot_map(gdf_data, col_viz=None):
+def shape_plot_map(gdf_data, col_viz=None, txt_title='original plot', gdf_background=None):
     from h3ronpy import vector, util
 
     # original source - https://towardsdatascience.com/uber-h3-for-data-analysis-with-python-1e54acdcc908
     figure, axis = plt.subplots(1, 1, figsize=(14, 8))
+
+    # provided a background shape too? - https://towardsdatascience.com/plotting-maps-with-geopandas-428c97295a73
+    if gdf_background is not None:
+        gdf_background = gpd.GeoDataFrame(gdf_background)
+        gdf_background.plot(ax=axis, color='lightgrey')
+
     gdf_copy = gpd.GeoDataFrame(gdf_data)
-    txt_title = ''
     if col_viz is not None:
         gdf_copy.plot(ax=axis, column=col_viz, cmap='winter', legend=True)
-        txt_title = f", value:{col_viz}"
+        txt_title = f"{txt_title}, ({col_viz})"
     else:
         gdf_copy.plot(ax=axis)
-    axis.set_title(f'original{txt_title}')
-    fn_log(f"[shape_plot_example] Input columns: {gdf_copy.columns}")
+    axis.set_title(txt_title)
+    fn_log(f"[shape_plot_map] Input columns: {gdf_copy.columns}")
+    
+    # adjust extents of the graph to only include main data
+    if gdf_background is not None:
+        gdf_extent = gdf_copy.total_bounds
+        plot_fudge = 0.05
+        axis.set_xlim(gdf_extent[0] - plot_fudge, gdf_extent[2] + plot_fudge)
+        axis.set_ylim(gdf_extent[1] - plot_fudge, gdf_extent[3] + plot_fudge)
 
-#     # convert to h3 cells and build a new geodataframe
-#     for res_idx in range(min(3, len(res_compare))):
-#         ax_target = axis[res_idx % 2, math.floor(res_idx / 2)]
-#         try:
-#             gdf_plot = util.h3index_column_to_geodataframe(vector.geodataframe_to_h3(gdf_copy, res_compare[res_idx]))
-#         except Exception as e: 
-#             fn_log("[shape_plot_example]: failed to convert entire section to h3 cells, skipping")
-#             continue
-#         del gdf_copy['to_h3_idx']
-#         if col_viz is not None:
-#             gdf_plot.plot(ax=ax_target, column=col_viz, cmap='winter', legend=True)
-#         else:
-#             gdf_plot.plot(ax=ax_target)
-#         ax_target.set_title(f"resolution: {res_compare[res_idx]}{txt_title}")
 
+
+
+# COMMAND ----------
+
+########## ENCODING FUNCTIONS #################
+
+# COMMAND ----------
+
+# https://pypi.org/project/h3-pyspark/
+from h3_pyspark.indexing import index_shape 
+import h3_pyspark  
+
+from shapely import wkt, geometry
+import json
+
+
+def shape_encode_h3cells(df_shape, col_keys, resolution_h3, col_geometry='geometry'):
+    """Given an input shape dataframe, encode all entries into h3 cells.  Assmes 'geometry' column
+           is in WKT text format (not parsed yet).  Pass one or more keys in the param `col_keys`.
+       Returns: DataFrame of <key, h3> tuples after mapping to the specified resolution.
+           ex.     df_pairs = shape_encode_h3cells(df, ['zip'], 11, 'geometry')
+    """
+    # create encoding function from raw zip code geometry to h3
+    pdf_geo_decode = lambda x: json.dumps(geometry.mapping(wkt.loads(x)))
+    udf_geo_decode = F.udf(pdf_geo_decode)
+    # create encoded dataframe, explode to unique key
+    df_encoded = (df_shape
+        .withColumn('geometry_json', udf_geo_decode(F.col('geometry')))
+        .withColumn("h3", index_shape(F.col('geometry_json'), F.lit(resolution_h3)))
+        .select(*col_keys, F.explode('h3').alias('h3'))
+    )
+    # display(df_encoded.limit(10))
+    return df_encoded
+
+
+def point_encode_h3(df_points, col_lat, col_long, resolution_h3, col_h3='h3'):
+    """Given an input point dataframe, encode all points into h3 hashes and store in the
+           column defined by `col_h3`.
+       Returns: DataFrame with extra column after encoding.
+           ex.     df_mapped = point_encode_h3(df_points, 'lat', 'long', 11, 'h3')
+    """
+    # now encode taxi trips from raw lat/long to h3
+    df_encoded = df_points
+    if col_h3 not in df_points.columns:
+        df_encoded = df_points.withColumn(col_h3, h3_pyspark.geo_to_h3(F.col(col_lat), F.col(col_long), F.lit(resolution_h3)))
+    return df_encoded
+
+
+def point_intersect_h3cells(df_points, col_lat, col_long, resolution_h3, df_h3_cells, col_h3='h3'):
+    """Given an input point dataframe, encode all points into h3 hashes and perform a join 
+           across the cells dataframe. Needs h3 join column is `col_h3`.
+       Returns: DataFrame with rows df_points + [h3 + df_h3_cells.columns] after join.
+           ex.     df_mapped = point_intersect_h3cells(df_points, 'lat', 'long', 11, df_cells, 'h3')
+    """
+    # now encode taxi trips from raw lat/long to h3
+    df_encoded = (
+        point_encode_h3(df_points, col_lat, col_long, resolution_h3, col_h3)
+        .withColumnRenamed(col_h3, '_tmp_h3')
+    )
+    # finally, join the zip geometry to the lat/long
+    df_encoded = (df_encoded      
+        .join(df_h3_cells, df_encoded['_tmp_h3']==df_h3_cells[col_h3], 'left')
+        .drop('_tmp_h3')
+    )
+    return df_encoded
+
+
+# COMMAND ----------
+
+########## INPUT AND OUTPUT FUNCTIONS #################
 
 # COMMAND ----------
 
@@ -184,9 +261,6 @@ if False:  # testing and singleton imports
 
 # COMMAND ----------
 
-import fsspec
-import pandas
-import geopandas as gpd
 
 # NOTE: this method (using a local mount and 'ffspec') did not work for a direct load, please use 
 #       the `shape_export` and `shape_import` functions instead
@@ -194,6 +268,9 @@ import geopandas as gpd
 # method to read shp directly from ADLS (unfortunately, it didn't work in the end)
 def shape_import_adls(path_file=f"{CREDENTIALS['paths']['databricks_dataset']}/tl_2021_us_zcta520/tl_2021_us_zcta520.shp", 
                       mode='rb', sas_token=None):
+    import fsspec
+    import pandas
+    import geopandas as gpd
     import re
     # Example shape data location
     # tl_2021_us_zcta520.shp.ea.iso.xml "https://dsairgeneraleastus2sa.blob.core.windows.net/mlworkshop2022/shapefiles
@@ -227,37 +304,14 @@ def shape_import_adls(path_file=f"{CREDENTIALS['paths']['databricks_dataset']}/t
 
 # COMMAND ----------
 
-# # attempt to map zip code to a source DF using lat/lon and h3 indexing
-# def h3_map_zip(df_src, col_src_lat, col_src_lon, df_zip, h3_resolution=11):
-#     # confused about resolution? check out this example - https://observablehq.com/@nrabinowitz/h3-hierarchical-non-containment?collection=@nrabinowitz/h3
-    
-#     # encode source into h3 resolution
-#     # load a zip shape file, filter by intersected h3
-#     # 
-#     # 
-    
-#     .withColumn('h3', udf_h3(F.col('intptlat'), F.col('intptlon'), F.lit(8)))
-    
-    
-
-# COMMAND ----------
-
 # testing to plot different resolutions of zip code ata
 if False: 
-    import geopandas as gpd
-    from shapely import wkt
     df_zip_shape = spark.read.format('delta').load(f"{CREDENTIALS['paths']['databricks_dataset']}/tl_2021_us_zcta520/geometry/ztca")
     df_sub = (df_zip_shape
         .filter((F.col('city') == F.lit('Austin')) & (F.col('state')==F.lit('TX')))
     #     .filter(F.col('state')==F.lit('TX'))
     )
     
-    # https://pypi.org/project/h3-pyspark/
-    from h3_pyspark.indexing import index_shape 
-
-    from shapely import wkt, geometry
-    import json
-
     # create encoding function from raw zip code geometry to h3
 #     pdf_geo_decode = lambda x: json.dumps(geometry.mapping(wkt.loads(x)))
 
@@ -280,9 +334,5 @@ if False:
     #             legend = True, legend_kwds={'shrink': 0.3},
     #             alpha = .5)
     # ax.set_title('Sqft Heatmap')
-
-
-
-# COMMAND ----------
 
 
