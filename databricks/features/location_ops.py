@@ -24,6 +24,7 @@ import pandas as pd
 import matplotlib.pyplot as plt
 import math
 
+
 # COMMAND ----------
 
 #helper to demonstrate the different resolutions
@@ -63,6 +64,7 @@ def shape_plot_example(gdf_example=None, res_compare=[7, 9, 11], col_viz=None):
         ax_target.set_title(f"resolution: {res_compare[res_idx]}{txt_title}")
 
         
+    return figure, axis
 
     
 # https://github.com/nmandery/h3ronpy
@@ -74,7 +76,7 @@ def shape_plot_example(gdf_example=None, res_compare=[7, 9, 11], col_viz=None):
 
 # COMMAND ----------
 
-# helper to demonstrate simple plot of  amap...
+# helper to demonstrate simple plot of a single map...
 def shape_plot_map(gdf_data, col_viz=None, txt_title='original plot', gdf_background=None):
     from h3ronpy import vector, util
 
@@ -102,7 +104,93 @@ def shape_plot_map(gdf_data, col_viz=None, txt_title='original plot', gdf_backgr
         axis.set_xlim(gdf_extent[0] - plot_fudge, gdf_extent[2] + plot_fudge)
         axis.set_ylim(gdf_extent[1] - plot_fudge, gdf_extent[3] + plot_fudge)
 
+    return figure, axis
 
+
+# COMMAND ----------
+
+# helper to plot the variants of one population...
+def shape_plot_map_factors(gdf_data, col_factor, col_viz, txt_title='original plot', 
+                           use_log=True, col_norm=None, gdf_background=None):
+    import numpy as np
+    from h3ronpy import vector, util
+    import matplotlib.colors
+    import matplotlib.cm
+
+    # provided a background shape too? - https://towardsdatascience.com/plotting-maps-with-geopandas-428c97295a73
+    if gdf_background is not None:
+        gdf_background = gpd.GeoDataFrame(gdf_background)
+
+    # collect highest sum'd along a factor
+    gdf_copy = gpd.GeoDataFrame(gdf_data).fillna(0)
+    pdf_factors = (gdf_copy
+        .apply(lambda x: 10 ** x if use_log and x.name == col_viz else x)   # inverse of log 10
+        .groupby(col_factor).sum()
+        .reset_index(drop=False)   # reset to get group criterion
+        .sort_values(col_viz, ascending=False)    # sort by new sum
+        .apply(lambda x: np.log10(x) if use_log and x.name == col_viz else x)   # go back to log10
+    )
+    dict_factors = (pdf_factors
+        .head(4)
+        .to_dict(orient='records')
+    )
+    list_factor_keep = [x[col_factor] for x in dict_factors]
+    
+    # compute the average by zone? (col_norm defined)
+    if col_norm:    # use this column to group and find deltas
+        col_mean = f"mean_{col_viz}"
+        col_std = f"std_{col_viz}"
+        pdf_avg = (gdf_copy
+            .apply(lambda x: 10 ** x if use_log and x.name == col_viz else x)   # inverse of log 10
+            .groupby(col_norm)[col_viz].agg(['mean', 'std'])
+            .rename(columns={'mean':col_mean, 'std':col_std})
+        )   # just dataframe with index + mean value
+
+        gdf_copy = (gdf_copy   # perform join with our delta column  (gdf_copy has many, pdf_avg has few)
+            .set_index(col_norm, drop=True)
+            .join(pdf_avg)
+            .reset_index(drop=False)
+        )
+        gdf_copy[f"{col_viz}_prior"] = gdf_copy[col_viz]   # save a copy of the prior data
+        if use_log:   # need to dip in and out of log10?
+            gdf_copy[col_viz] = 10 ** gdf_copy[col_viz]
+        # Z-score normalize ((X - mean) / std-dev)
+        # gdf_copy[col_viz] = (gdf_copy[col_viz] - gdf_copy[col_mean]) / gdf_copy[col_std]  # Z-score norm
+        # percentage normalize ((X - mean) / mean)
+        gdf_copy[col_viz] = (gdf_copy[col_viz] - gdf_copy[col_mean]) / gdf_copy[col_mean]  # percent-difference
+        # end normalization
+
+    xmin = gdf_copy[col_viz].min()
+    xmax = gdf_copy[col_viz].max()
+    fn_log(f"[shape_plot_map] Input columns: {gdf_copy.columns}; factors: {dict_factors}; extents [{xmin}, {xmax}]")
+
+    # original source - https://towardsdatascience.com/uber-h3-for-data-analysis-with-python-1e54acdcc908
+    figure, axis = plt.subplots(2, 2, figsize=(16, 12))
+    norm_map = matplotlib.colors.Normalize(xmin, xmax, True)
+
+    # iterate through each of the retained factor names
+    for res_idx in range(len(list_factor_keep)):
+        ax_target = axis[math.floor(res_idx / 2), res_idx % 2]
+        gdf_sub = gdf_copy[gdf_copy[col_factor] == list_factor_keep[res_idx]]
+        if gdf_background is not None:
+            gdf_background.plot(ax=ax_target, color='lightgrey')
+        gdf_sub.plot(ax=ax_target, column=col_viz, cmap='winter', norm=norm_map, legend=True)
+        ax_target.set_title(f"{list_factor_keep[res_idx]} ({res_idx + 1}/{len(pdf_factors)}), {txt_title}")
+        # handy hack from here -- https://stackoverflow.com/a/34059167
+#         ax_target.collections[-1].set_cmap('map_factor_')   # LinearSegmentedColormap
+#         for colormap in colormap_list:
+#             print(colormap.vmin, colormap.vmax)
+#         print(colormap)
+    
+        # adjust extents of the graph to only include main data
+        if gdf_background is not None:
+            gdf_extent = gdf_sub.total_bounds
+            plot_fudge = 0.05
+            ax_target.set_xlim(gdf_extent[0] - plot_fudge, gdf_extent[2] + plot_fudge)
+            ax_target.set_ylim(gdf_extent[1] - plot_fudge, gdf_extent[3] + plot_fudge)
+        # done looping
+    # done function
+    return figure, axis
 
 
 # COMMAND ----------

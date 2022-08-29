@@ -153,6 +153,7 @@ CREDENTIALS['paths'].update({
     'nyctaxi_h3_sampled': f"{CREDENTIALS['paths']['databricks_dataset']}/experiment/nyctaxi_h3_sampled",  # subsampled with h3
     'nyctaxi_h3_zips': f"{CREDENTIALS['paths']['databricks_dataset']}/experiment/nyctaxi_h3_zips",   # zip stat data
     'nyctaxi_h3_zones': f"{CREDENTIALS['paths']['databricks_dataset']}/experiment/nyctaxi_h3_zones",   # zone stat data
+    'demographics_factors': f"{CREDENTIALS['paths']['databricks_dataset']}/experiment/demographics_factors",   # groups by various factors
     'nyctaxi_geo_sampled': f"{CREDENTIALS['paths']['databricks_dataset']}/experiment/nyctaxi_geo_sampled",
 })
 
@@ -160,7 +161,7 @@ CREDENTIALS['paths'].update({
 dt_now_month = dt.datetime(year=dt.datetime.now().year, month=dt.datetime.now().month, day=1)
 CREDENTIALS['constants'].update({
     'MLFLOW_EXPERIMENT': "MLWorkshop2022",
-    'EXPERIENCED_MODE': False,   # change this flag to run some processing in 'experienced' mode
+    'EXPERIENCED_MODE': True,   # change this flag to run some processing in 'experienced' mode
     'WORKSHOP_ADMIN_MODE': CREDENTIALS['credentials']['ATTID'] in ['ez2685'],
     'DATA_SUBSAMPLE_RATIO': 0.03,   # from our raw data, grab only 3% for quicker demos in this workshop!
 

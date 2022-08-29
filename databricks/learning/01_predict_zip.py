@@ -206,6 +206,13 @@ pdf_shape_states = (spark.read.format('delta').load(CREDENTIALS['paths']['geomet
 )
 pdf_shape_states['geometry'] = pdf_shape_states['geometry'].apply(lambda x: wkt.loads(x))
 
+# load geometry for NEW YORK state; convert to geometry prsentation format
+pdf_shape_states = (spark.read.format('delta').load(CREDENTIALS['paths']['geometry_state'])
+    .filter(F.col('stusps')==F.lit('NY'))
+    .toPandas()
+)
+pdf_shape_states['geometry'] = pdf_shape_states['geometry'].apply(lambda x: wkt.loads(x))
+
 # join for both the pick-up and drop off
 df_taxi_indexed = (
     point_intersect_h3cells(df_taxi_encoded.withColumnRenamed('pickup_h3', 'h3'),   # temp rename
@@ -400,35 +407,155 @@ shape_plot_map(pdf_sub, col_viz='count_log10', txt_title=f"Zone Log-Count ({num_
 
 # COMMAND ----------
 
-# demographic_load_fs
-
-
 path_read = CREDENTIALS['paths']['demographics_raw']
-df_demographics = spark.read.format('delta').load(path_read)
-fn_log(f"Total available demographic entries... {df_demographics.count()}")
-display(df)
+# load geometry for zip codes and filter for NEW YORK state; 
+df_shape_tlc = spark.read.format('delta').load(CREDENTIALS['paths']['geometry_nyctaxi'])
 
-# find zips of interest
-df_zips = df_demographics.select('zipcd').distinct()
-fn_log(f"Number of unique zips... {df_zips.count()}")
+# feel free to try this at home, but you DO have to set up some other secrets / codes to use the feature store...
+#    see - https://data.DOMAIN/products-and-services/self-service/Atlantis-Feature-Store
+if CREDENTIALS['constants']['EXPERIENCED_MODE'] and CREDENTIALS['constants']['WORKSHOP_ADMIN_MODE']:
+    # load raw features from the feature store (this is an *advanced* topic that we'll review in hour 3!)
+    df_demos_raw = demographic_load_fs()
+
+    # load geometry for zip codes and filter for NEW YORK state; 
+    df_tlc_cells = shape_encode_h3cells(df_shape_tlc, ['zone'], CREDENTIALS['constants']['RESOLUTION_H3'], 'the_geom')
+
+    # join for both the pick-up and drop off
+    df_demos_indexed = (
+        point_intersect_h3cells(df_demos_raw, 'latitude_cif', 'longitude_cif', 
+                                CREDENTIALS['constants']['RESOLUTION_H3'], df_tlc_cells, col_h3='h3')
+        .dropna(subset=['zone'])    # drop those that are null (that means they're not in our study area)
+        .drop('latitude_cif', 'longitude_cif')    # drop the raw lat/long to avoid SPI/PII danger
+        .withColumnRenamed('zone', '_zone_match')   # rename for next matching below
+    )
+    df_demos_indexed = (df_demos_indexed   # also going to add borough name!
+        .join(df_shape_tlc.select('zone', 'borough'),
+              df_shape_tlc['zone']==df_demos_indexed['_zone_match'], 'left')
+        .drop('_zone_match')
+    )
+    dbutils.fs.rm(path_read, True)
+    df_demos_indexed.write.format('delta').save(path_read)  # save new demographics subset
+
+fn_log("Sneak peak at demographics...")
+df_demos_indexed = spark.read.format('delta').load(path_read)
+display(df_demos_indexed.limit(10))
+
+# pdf_sub = df_zones.toPandas().sort_values(by='count', ascending=False)
+# pdf_sub['geometry'] = pdf_sub['geometry'].apply(lambda x: wkt.loads(x))
+# num_total = len(pdf_sub['count'])
+# shape_plot_map(pdf_sub, col_viz='count_log10', txt_title=f"Zone Log-Count ({num_total} total zones)", 
+#                gdf_background=pdf_shape_states)
+
 
 
 # COMMAND ----------
 
+# MAGIC %md 
+# MAGIC ## Demographic Exploration
+# MAGIC Demographics are senstive, but in aggregate, they give a peek at the population that you're serving in an area.
+# MAGIC From the table above, we have subset of columns (personal addresses and names have been removed) that describe 
+# MAGIC several characterstics of the inhabitant. 
+# MAGIC 
+# MAGIC *NOTE: These demographics are sourced from an outside vendor so it's outside 
+# MAGIC the scope of this workshop to focus on collection or class namings.*
+# MAGIC 
+# MAGIC In this notebook, we refer to these as 'demographic factors' and will experiment with joining various factors to
+# MAGIC our source data.
+# MAGIC * `gnrt` - the "generation" (by age) of the individual (e.g. "Millenials", "GenX", etc.)
+# MAGIC * `ethnc_grp` - the ethnic group of the individual (e.g. "Asian", "Hispanic", etc.)
+# MAGIC * `gndr` - the gender of the individual (e.g. "F", or "M")
+# MAGIC * `edctn` - the education level of the individual (e.g. "Bach Degree - Likely", "Some College - Likely", etc.)
+# MAGIC * `marital_status_cif` - marital status (e.g. "5M" or "5S")
+# MAGIC * `hshld_incme_grp` - the group household income (e.g. "$150K-$249K", "<$50K", etc.)
+# MAGIC 
+# MAGIC For those techncially saavy individuals, we are **not** aggregating by a single household and are instead getting
+# MAGIC numbers for everyone that lives in an area.  Numerically that means households that have multiple individuals 
+# MAGIC get more weight, but this may only matter if comparing factors like *household income* (`hshld_incme_grp`).
 
+# COMMAND ----------
 
-from shapely import wkt
+path_read = CREDENTIALS['paths']['demographics_factors']
 
-fn_log(f"Plotting of unique zips on map...")
+if CREDENTIALS['constants']['EXPERIENCED_MODE'] and CREDENTIALS['constants']['WORKSHOP_ADMIN_MODE']:
+    df_demos_pivot = demographic_factors_count(df_demos_indexed, list_factors=['zone'])
+    dbutils.fs.rm(path_read, True)
+    df_demos_pivot.write.format('delta').save(path_read)  # save new demographics factorized version
 
-df_geo = spark.read.format('delta').load(CREDENTIALS['paths']['geometry_zip'])
-df_geo = (df_geo
-    .join(df_zips, df_zips['zip']==df_geo['zip'], 'inner')
-    .withColumn('count_log10', F.log(10.0, F.col('count')))
+fn_log("Factorized demographics by zone...")
+df_demos_pivot = spark.read.format('delta').load(path_read)
+list_factors = df_demos_pivot.select('factor').distinct().collect()
+fn_log(f"These factors are available: {list_factors}")
+display(df_demos_pivot)
+
+# load geometry for nyc taxi zones
+df_shape_tlc = (
+    spark.read.format('delta').load(CREDENTIALS['paths']['geometry_nyctaxi'])
+    .withColumnRenamed('zone', '_zone_join')
 )
-pdf_sub = df_geo.toPandas()
-pdf_sub['geometry'] = pdf_sub['geometry'].apply(lambda x: wkt.loads(x))
-shape_plot_map(pdf_sub, col_viz='count_log10')
+
+# now we'll join
+pdf_demos_pivot_shape = (df_demos_pivot
+    .join(df_shape_tlc.select('_zone_join', 'the_geom'), df_shape_tlc['_zone_join']==df_demos_pivot['zone'])
+    .drop('_zone_join')
+    .withColumn('count_log10', F.log(10.0, F.col('count')))
+    .withColumnRenamed('the_geom', 'geometry')
+    .toPandas()
+)
+pdf_demos_pivot_shape['geometry'] = pdf_demos_pivot_shape['geometry'].apply(lambda x: wkt.loads(x))
+
+
+# COMMAND ----------
+
+# MAGIC %md
+# MAGIC ## Visual Inspection of Distributions
+# MAGIC As a CDS, a lot can be accomplished by simply looking at data distributions for patterns.  We'll do that below
+# MAGIC by first inspecting the alignment of our previous map (showing the number of rides by T&LC zones) and comparing
+# MAGIC it to a few demographic factors (showing the population by T&LC zones).
+
+# COMMAND ----------
+
+pdf_sub = pdf_demos_pivot_shape[pdf_demos_pivot_shape['factor']=='gnrt']
+shape_plot_map_factors(pdf_sub, col_factor='value', col_viz='count_log10', use_log=True,
+                       txt_title=f"Age Difference by Zone (%)", col_norm='zone',
+                       gdf_background=pdf_shape_states)
+
+# COMMAND ----------
+
+# MAGIC %md
+# MAGIC From the plots above (first looking at "generation" distribtution), we notice a few things.
+# MAGIC 1. The distribution of populations may vary in magnitude (e.g. the numbers on 
+# MAGIC    legend are different), but the distributions themselves are roughly the same in relative intensity
+# MAGIC    for each generation group.
+# MAGIC 2. There is one pocket for "Millenials" in Brooklyn and generally "Seniors" have neutral or lower overall counts.
+# MAGIC 3. Looking at the maps, there aren't many significant differences in which areas are "inactive" or
+# MAGIC    simply have too few individuals of that demographic factor.  
+# MAGIC       * For example, many of the zones in Queens and Brooklyn are active across all generations.
+
+# COMMAND ----------
+
+pdf_sub = pdf_demos_pivot_shape[pdf_demos_pivot_shape['factor']=='ethnc_grp']
+shape_plot_map_factors(pdf_sub, col_factor='value', col_viz='count_log10', use_log=True,
+                       txt_title=f"Ethnicity Difference by Zone (%)", col_norm='zone',
+                       gdf_background=pdf_shape_states)
+
+
+# COMMAND ----------
+
+# MAGIC %md
+# MAGIC From the plots above there is a different story when comparing ethnicity.
+# MAGIC 1. There are clear preferences for certain groups by population count.
+# MAGIC    * *African American* in Queens, 
+# MAGIC    * *Hispanic* in Bronx
+# MAGIC    * *General* = Staten Island + Manhattan + Brooklyn, 
+# MAGIC 2. There are serious disparities by zone to be considered when analyzing our historical rides map
+
+# COMMAND ----------
+
+pdf_sub = pdf_demos_pivot_shape[pdf_demos_pivot_shape['factor']=='hshld_incme_grp']
+shape_plot_map_factors(pdf_sub, col_factor='value', col_viz='count_log10', use_log=True,
+                       txt_title=f"HH Income Difference by Zone (%)", col_norm='zone',
+                       gdf_background=pdf_shape_states)
+
 
 # COMMAND ----------
 
