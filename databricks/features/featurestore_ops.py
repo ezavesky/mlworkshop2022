@@ -23,7 +23,7 @@ import pandas as pd
 # COMMAND ----------
 
 # load demographics from neustar/feature store, dropping personally identifiable field (e.g. name, custloc, etc)
-def demographic_load_fs(list_columns=['zipcd', 'age', 'hshld_income_cd', 'hshld_incme_grp', 'est_curr_home_value', 'exact_age', 'gnrt', 'lang', 'ethnc_grp', 'ethnic_sub_grp', 'gndr', 'latitude_cif', 'longitude_cif', 'marital_status_cif', 'building_area_1_cif', 'lot_size_square_feet_cif', 'market_value_land_cif', 'market_value_improvement_cif', 'number_of_children_in_living_unit_cif', 'number_of_units_cif', 'number_of_bedrooms_cif', 'year_built_cif', 'tax_amount_cif', 'head_of_household_cif', 'length_of_residence_cif', 'edctn', 'state_cif', 'city_cif'], auth_token=None):
+def afs_load_stub(name_project, name_data, auth_token=None):
     from featurestore import Client
     import os
     os.environ['no_proxy'] = 'atlantis-feature-store.SERVICE_SITE'
@@ -34,11 +34,33 @@ def demographic_load_fs(list_columns=['zipcd', 'age', 'hshld_income_cd', 'hshld_
         auth_token = CREDENTIALS['credentials']['ATLANTIS']
     client.auth.set_auth_token(auth_token)
 
-    project = client.projects.get('Neustar')
-    fs = project.feature_sets.get('Neustar Demographics')
+    project = client.projects.get(name_project)
+    fs = project.feature_sets.get(name_data)
     data_reference = fs.retrieve()
     df = data_reference.as_spark_frame(spark)
-    fn_log(f"[demographic_load_fs] Available columns... {df.columns}")
+    fn_log(f"[afs_load_stub] Available columns... {df.columns}")
+    return df
+
+
+# COMMAND ----------
+
+# load churn data
+#   https://atlantis.SERVICE_SITE/featurestore/#/view-feature/dabbler/voluntary%20churn%20model?page=1&level=all-features
+def churn_load_fs(list_columns=None, auth_token=None):
+    df = afs_load_stub('dabbler', 'voluntary churn model')
+
+    # filter to specifically requested columns
+    if list_columns is not None:
+        return df.select(list_columns)
+    return df
+
+
+# COMMAND ----------
+
+# load demographics from neustar/feature store, dropping personally identifiable field (e.g. name, custloc, etc)
+#   https://atlantis.SERVICE_SITE/featurestore/#/view-feature/dabbler/neustar%20demographics?page=1&level=all-features
+def demographic_load_fs(list_columns=['zipcd', 'age', 'hshld_income_cd', 'hshld_incme_grp', 'est_curr_home_value', 'exact_age', 'gnrt', 'lang', 'ethnc_grp', 'ethnic_sub_grp', 'gndr', 'latitude_cif', 'longitude_cif', 'marital_status_cif', 'building_area_1_cif', 'lot_size_square_feet_cif', 'market_value_land_cif', 'market_value_improvement_cif', 'number_of_children_in_living_unit_cif', 'number_of_units_cif', 'number_of_bedrooms_cif', 'year_built_cif', 'tax_amount_cif', 'head_of_household_cif', 'length_of_residence_cif', 'edctn', 'state_cif', 'city_cif', 'cloc_cust_nm'], auth_token=None):
+    df = afs_load_stub('Neustar', 'Neustar Demographics')
 
     # filter to specifically requested columns
     if list_columns is not None:

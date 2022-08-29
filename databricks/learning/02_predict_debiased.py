@@ -12,24 +12,14 @@
 # COMMAND ----------
 
 # MAGIC %md
-# MAGIC # Let's Make "NYC Taxi 2035"!
+# MAGIC # Let's Make "NYC Taxi 2025"!
 # MAGIC <img src='https://images.pexels.com/photos/5648421/pexels-photo-5648421.jpeg?auto=compress&cs=tinysrgb&w=640&h=427&dpr=2' width='300px' title="no more 'hailing' with preemptive taxis" />
 # MAGIC 
-# MAGIC ## Background
-# MAGIC * In the future, there will be a need to preemptively position resources, like autonomous 
-# MAGIC   cars, drones, groceries, etc. Where they may be most needed and right when they're needed
-# MAGIC * All of this preemptiveness is accomplished with AI and machine-learned models built with historical data.
-# MAGIC 
-# MAGIC This is your chance to build these insights together!! 
-# MAGIC 
-# MAGIC ### Ground Rules
-# MAGIC * In this workshop, we'll start with your CDS data (e.g. taxi rides) and discover ways to augment
-# MAGIC   with location, demographic, and other datasets to make better predictions.
-# MAGIC * In these notebooks, there will be both a 'beginner' and an 'experienced' set of code that you can 
-# MAGIC   execute according to your preference.  
-# MAGIC     * The big difference is that the 'beginner' code will mostly load pre-computed data and focus 
-# MAGIC       on the illustration of that data instead of the algorithms itself.
-# MAGIC * By default, your code will run the _'beginner'_ path.  As a testament to your _'expertness'_ you can 
+# MAGIC ## Review
+# MAGIC * In the first notebook (**01_explore_data**) we looked at NYC Taxi data and regional demographic data.
+# MAGIC    * We found that NYC T&LC's geospatial groupings ("zones") worked well for location aggregation.
+# MAGIC    * We found and grouped demographics by zones and found there are some potential biases to deal with
+# MAGIC * As a reminder, your code will default to the _'beginner'_ path.  As a testament to your _'expertness'_ you can 
 # MAGIC   edit the configuration file (`utilities/settings.py`) to set this variable.  *(HINT: Look for EXPERIENCED_MODE)*
 # MAGIC * [Image source](https://www.pexels.com/photo/unrecognizable-black-man-catching-taxi-on-city-road-5648421/)
 
@@ -39,78 +29,84 @@
 
 # COMMAND ----------
 
-## Just for Visualization ##
-# We won't walk through this code, but it gives a peak at how we compute some aggregate
-# statistics for the dataset.  We avoid the execution here because it takes several minutes
-# for each person to re-run the statistics on this large dataset
+# MAGIC %md
+# MAGIC ## An Early Classifier
+# MAGIC The first part of our worked focused on core CDS responsibilities.   This notebook will look at ways to 
+# MAGIC change your raw data and learned ML classifiers.  
+# MAGIC 
+# MAGIC *NOTE:* For a quantitative review of our progress, we will be training a light ML model, but the principles
+# MAGIC for bias mitigation still apply evenif you're just workingn from an XLS spreadsheet!
+# MAGIC 
+# MAGIC Let's create some features!  From the raw ride data, we know that we have location, time, 
+# MAGIC and cost information.  We've alreaady handled location information, so let's think about how to
+# MAGIC represent time and cost metrics.
+# MAGIC * Day part - instead of specific minutes or hours, let's look at more general day parts
+# MAGIC * Weekend or weekday - behaviors may change according to these parts of the week
+# MAGIC * Distance travelled - compute this from the specific lat/long coordinates
+# MAGIC * Expense of the fare - there's still that data problem (check out the previous notebook) that we need to solve for
+# MAGIC * (location zone) - also include the mapped "zone" for the features now that we're chosen them
 
-def dataset_filter_raw(df_input):
-    import datetime as dt
-    # this is a helper function to filter out bad data by time range
-    return (df_input
-        .filter(F.col('pickup_datetime') >= F.lit(dt.datetime(year=2009, day=1, month=1)))  # after Jan 1, 2009
-        .filter(F.col('pickup_datetime') <= F.lit(dt.datetime(year=2020, day=1, month=1)))  # before Jan 1, 2020
-        .dropna(subset=['fare_amount'])  # drop any records that have empty/null fares
-        .filter(F.col('fare_amount') >= F.lit(0.0))  # no negative-dollar fares
-        .filter(F.col('fare_amount') <= F.lit(20000.0))  # no super-expensive fares
+# COMMAND ----------
+
+# load geometry for zip codes and filter for NEW YORK state; 
+df_shape_tlc = spark.read.format('delta').load(CREDENTIALS['paths']['geometry_nyctaxi'])
+
+
+# only admins write this one (it takes almost 10m to aggregate)
+if CREDENTIALS['constants']['EXPERIENCED_MODE'] and CREDENTIALS['constants']['WORKSHOP_ADMIN_MODE']:  
+    ### --- these are parts from the first notebook ---- 
+    # encode the cells (to match zones)
+    df_tlc_cells = shape_encode_h3cells(df_shape_tlc, ['zone'], CREDENTIALS['constants']['RESOLUTION_H3'], 'the_geom')
+    # load taxi data that has h3 coordinates
+    df_taxi_encoded = spark.read.format('delta').load(CREDENTIALS['paths']['nyctaxi_h3_sampled'])  # has h3
+
+    # join for both the pick-up and drop off
+    df_taxi_indexed = (
+        point_intersect_h3cells(df_taxi_encoded.withColumnRenamed('pickup_h3', 'h3'),   # temp rename
+                                'pickup_latitude', 'pickup_longitude', 
+                                CREDENTIALS['constants']['RESOLUTION_H3'], df_tlc_cells, col_h3='h3')
+        .withColumnRenamed('zone', 'pickup_zone')   # rename merged zip
+        .withColumnRenamed('h3', 'pickup_h3')   # fix rename and drop extra
+    )
+    df_taxi_indexed = (
+        point_intersect_h3cells(df_taxi_indexed.withColumnRenamed('dropoff_h3', 'h3'),   # temp rename
+                                'dropoff_latitude', 'dropoff_longitude', 
+                                CREDENTIALS['constants']['RESOLUTION_H3'], df_tlc_cells, col_h3='h3')
+        .withColumnRenamed('zone', 'dropoff_zone')   # rename merged zip
+        .withColumnRenamed('h3', 'dropoff_h3')    # fix rename and drop extra
     )
 
-# an example of aggregations requried to build a simple time plot
-path_read = CREDENTIALS['paths']['nyctaxi_stats']
-if CREDENTIALS['constants']['EXPERIENCED_MODE'] and CREDENTIALS['constants']['WORKSHOP_ADMIN_MODE']:   
-    # preprocessing if admin (it's a lot of data)
-    path_read_raw = CREDENTIALS['paths']['nyctaxi_raw']
-    df_taxi_stats = (
-        dataset_filter_raw(spark.read.format('delta').load(path_read_raw))
-        .withColumn('date_trunc', F.date_trunc('day', F.col('pickup_datetime')))
-        .groupBy('date_trunc').agg(
-            F.mean(F.col('fare_amount')).alias('mean_total'),
-            F.max(F.col('fare_amount')).alias('max_total'),
-            F.min(F.col('fare_amount')).alias('min_total'),
-            F.count(F.col('pickup_datetime')).alias('volume'),        
-        )
+    ### --- now we're adding new features ---- 
+    df_taxi_indexed = (df_taxi_indexed
+        # encode trip duration 
+        .withColumn('ride_duration', (F.col("dropoff_datetime") - F.col("pickup_datetime")).seconds)
+        # encode into hour parts
+        .withColumn('pickup_hour', F.hour(F.col('pickup_datetime')))
+        .withColumn('pickup_daypart', 
+                    F.when(F.col('pickup_hour') < F.lit(5), 'twilight')  # 12a-5a
+                    .when(F.col('pickup_hour') < F.lit(10), 'morning')  # 5a-10a
+                    .when(F.col('pickup_hour') < F.lit(15), 'lunch')  # 10a-3p
+                    .when(F.col('pickup_hour') < F.lit(18), 'afternoon')  # 3p-6p
+                    .when(F.col('pickup_hour') < F.lit(18), 'night')  # 6p-11p
+                    .otherwise('twilight'))  # 11p-12a
+        .withColumn('dropoff_hour', F.hour(F.col('dropoff_datetime')))
+        .withColumn('dropoff_daypart', 
+                    F.when(F.col('dropoff_hour') < F.lit(5), 'twilight')  # 12a-5a
+                    .when(F.col('dropoff_hour') < F.lit(10), 'morning')  # 5a-10a
+                    .when(F.col('dropoff_hour') < F.lit(15), 'lunch')  # 10a-3p
+                    .when(F.col('dropoff_hour') < F.lit(18), 'afternoon')  # 3p-6p
+                    .when(F.col('dropoff_hour') < F.lit(18), 'night')  # 6p-11p
+                    .otherwise('twilight'))  # 11p-12a
+        # encode into day of week
+        .withColumn('day_of_week', F.dayofweek(F.col('pickup_datetime')))
+        .withColumn('weekpart', 
+                    F.when((F.col('day_of_week')==F.lit(1)) & (F.col('day_of_week')==F.lit(7)), 'weekend')  # Sun, Sat
+                    .when((F.col('day_of_week')==F.lit(6)) & (F.col('pickup_daypart')==F.lit('night')), 'weekend')  # Friday + night
+                    .otherwise('weekday'))  # all other times
+        # encode into longer term, like month and week of year
+        .withColumn('month_of_year', F.month(F.col('pickup_datetime')))
+        .withColumn('week_of_year', F.weekofyear(F.col('pickup_datetime')))          
     )
-    dbutils.fs.rm(path_read, True)  # destory entirely
-    df_taxi_stats.write.format('delta').save(path_read)
-
-# load data, make sure it's sorted by date!
-pdf_taxi_stats = (spark.read.format('delta').load(path_read)
-    .toPandas()
-    .sort_values('date_trunc')
-)
-
-# graph example from great plotting how-to site...
-#    https://www.python-graph-gallery.com/line-chart-dual-y-axis-with-matplotlib
-
-# https://matplotlib.org/stable/gallery/color/named_colors.html
-COLOR_VOLUME = 'tab:blue'
-COLOR_PRICE = 'tab:orange'
-
-fig, ax1 = plt.subplots(figsize=(14, 8))
-ax2 = ax1.twinx()
-ax1.bar(pdf_taxi_stats['date_trunc'], pdf_taxi_stats['volume'], color=COLOR_VOLUME, width=1.0)
-ax2.plot(pdf_taxi_stats['date_trunc'], pdf_taxi_stats['mean_total'], color=COLOR_PRICE, lw=4)
-# want to see some other weird stats? min/max are crazy (but we'll fix that later)
-# ax2.plot(pdf_taxi_stats['date_trunc'], pdf_taxi_stats['min_total'], color='violet', lw=2)
-# ax2.plot(pdf_taxi_stats['date_trunc'], pdf_taxi_stats['max_total'], color='firebrick', lw=2)
-
-ax1.set_xlabel("Date")
-ax1.set_ylabel("Total Ride Volume", color=COLOR_VOLUME, fontsize=14)
-ax1.tick_params(axis="y", labelcolor=COLOR_VOLUME)
-
-ax2.set_ylabel("Average Total Fare ($)", color=COLOR_PRICE, fontsize=14)
-ax2.tick_params(axis="y", labelcolor=COLOR_PRICE)
-
-fig.autofmt_xdate()
-fig.suptitle("2009 NYC Taxi Volume and Average Fares", fontsize=20)
-
-
-# compute some overall stats
-fn_log(f"Date Range: {pdf_taxi_stats['date_trunc'].min()} - {pdf_taxi_stats['date_trunc'].max()} (total days {len(pdf_taxi_stats)})")
-fn_log(f"Total Rides: {pdf_taxi_stats['volume'].sum()}")
-fn_log(f"Avg Fare: {pdf_taxi_stats['mean_total'].mean()}")
-
-
 
 # COMMAND ----------
 
@@ -149,15 +145,6 @@ shape_plot_map(pdf_sub, col_viz='count_log10', txt_title=f"Zone Log-Count ({num_
 
 # MAGIC %md
 # MAGIC # Want to find how to make a predictor
-# MAGIC ## Map to zip code
-# MAGIC doesn't work, too broad
-# MAGIC 
-# MAGIC ## Revisit other data, map to NYC taxi
-# MAGIC looks good
-# MAGIC 
-# MAGIC ## Wrap-up
-# MAGIC * Save data for prediction with these constraints
-# MAGIC * need to explore a little for your best join
 # MAGIC 
 # MAGIC # Want to do learning to predict
 # MAGIC 
@@ -172,43 +159,6 @@ shape_plot_map(pdf_sub, col_viz='count_log10', txt_title=f"Zone Log-Count ({num_
 # MAGIC * against borough
 # MAGIC * aginst income
 # MAGIC * etc...
-
-# COMMAND ----------
-
-df_taxi_zip = (df_taxi_indexed
-    # encode trip duration 
-    .withColumn('ride_duration', (F.col("dropoff_datetime") - F.col("pickup_datetime")).seconds)
-    # encode into hour parts
-    .withColumn('pickup_hour', F.hour(F.col('pickup_datetime')))
-    .withColumn('pickup_daypart', 
-                F.when(F.col('pickup_hour') < F.lit(5), 'twilight')  # 12a-5a
-                .when(F.col('pickup_hour') < F.lit(10), 'morning')  # 5a-10a
-                .when(F.col('pickup_hour') < F.lit(15), 'lunch')  # 10a-3p
-                .when(F.col('pickup_hour') < F.lit(18), 'afternoon')  # 3p-6p
-                .when(F.col('pickup_hour') < F.lit(18), 'night')  # 6p-11p
-                .otherwise('twilight'))  # 11p-12a
-    .withColumn('dropoff_hour', F.hour(F.col('dropoff_datetime')))
-    .withColumn('dropoff_daypart', 
-                F.when(F.col('dropoff_hour') < F.lit(5), 'twilight')  # 12a-5a
-                .when(F.col('dropoff_hour') < F.lit(10), 'morning')  # 5a-10a
-                .when(F.col('dropoff_hour') < F.lit(15), 'lunch')  # 10a-3p
-                .when(F.col('dropoff_hour') < F.lit(18), 'afternoon')  # 3p-6p
-                .when(F.col('dropoff_hour') < F.lit(18), 'night')  # 6p-11p
-                .otherwise('twilight'))  # 11p-12a
-    # encode into day of week
-    .withColumn('pickup_dow', F.dayofweek(F.col('pickup_datetime')))
-    .withColumn('pickup_weekpart', 
-                F.when((F.col('pickup_dow')==F.lit(1)) & (F.col('pickup_dow')==F.lit(7), 'weekend')  # Sun, Sat
-                .when((F.col('pickup_dow')==F.lit(6)) & (F.col('pickup_daypart')==F.lit('night'), 'weekend')  # Friday + night
-                .otherwise('weekday'))  # all other times
-    # encode into day of week
-    .withColumn('dropoff_dow', F.dayofweek(F.col('dropoff_datetime')))
-    .withColumn('dropoff_weekpart', 
-                F.when((F.col('dropoff_dow')==F.lit(1)) & (F.col('dropoff_dow')==F.lit(7), 'weekend')  # Sun, Sat
-                .when((F.col('dropoff_dow')==F.lit(6)) & (F.col('dropoff_daypart')==F.lit('night'), 'weekend')  # Friday + night
-                .otherwise('weekday'))  # all other times
-              
-)
 
 # COMMAND ----------
 

@@ -118,8 +118,12 @@ CREDENTIALS['paths'].update({
 
 # the last command assumes you make a scratch directory that you own (or can write to) with your ATTID
 # for instructions on how to create your own scratch, head to notebook `1b_DATA_WRITE_EXAMPLES`
+CREDENTIALS['paths'].update({
+    'scratch_root_personal': f"abfss://{CREDENTIALS['credentials']['ATTID']}@STORAGE"
+})
+
 if dt.datetime.now() > dt.datetime(month=10, year=2022, day=21):     # the shared scratch will be disabled after Oct 21
-    CREDENTIALS['paths'].update({'scratch_root': f"abfss://{CREDENTIALS['credentials']['ATTID']}@STORAGE"})
+    CREDENTIALS['paths'].update({'scratch_root': CREDENTIALS['paths']['scratch_root_personal']})
 
 # No time to make your own scratch? no problem, you can use the temp container created for the workshop.
 # NOTE: this container will be deactivated within a week or so of the workshop!
@@ -154,7 +158,7 @@ CREDENTIALS['paths'].update({
     'nyctaxi_h3_zips': f"{CREDENTIALS['paths']['databricks_dataset']}/experiment/nyctaxi_h3_zips",   # zip stat data
     'nyctaxi_h3_zones': f"{CREDENTIALS['paths']['databricks_dataset']}/experiment/nyctaxi_h3_zones",   # zone stat data
     'demographics_factors': f"{CREDENTIALS['paths']['databricks_dataset']}/experiment/demographics_factors",   # groups by various factors
-    'nyctaxi_geo_sampled': f"{CREDENTIALS['paths']['databricks_dataset']}/experiment/nyctaxi_geo_sampled",
+    'nyctaxi_geo_sampled': f"{CREDENTIALS['paths']['databricks_dataset']}/experiment/nyctaxi_geo_sampled",  
 })
 
 # need to have time constants restructed?

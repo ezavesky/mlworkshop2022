@@ -12,7 +12,7 @@
 # COMMAND ----------
 
 # MAGIC %md
-# MAGIC # Let's Make "NYC Taxi 2035"!
+# MAGIC # Let's Make "NYC Taxi 2025"!
 # MAGIC <img src='https://images.pexels.com/photos/5648421/pexels-photo-5648421.jpeg?auto=compress&cs=tinysrgb&w=640&h=427&dpr=2' width='300px' title="no more 'hailing' with preemptive taxis" />
 # MAGIC 
 # MAGIC ## Background
@@ -135,7 +135,7 @@ ax2.set_ylabel("Average Total Fare ($)", color=COLOR_PRICE, fontsize=14)
 ax2.tick_params(axis="y", labelcolor=COLOR_PRICE)
 
 fig.autofmt_xdate()
-fig.suptitle("2009 NYC Taxi Volume and Average Fares", fontsize=20)
+fig.suptitle("NYC Taxi Volume and Average Fares", fontsize=20)
 
 
 # compute some overall stats
@@ -236,7 +236,7 @@ df_taxi_indexed = (
 # MAGIC ## Flex your CDS muscle!
 # MAGIC Remember, to be a CDS, one doesn't need to know how to program or train ML models to be a **CDS**!  Let's drive that point home.
 # MAGIC * What we have so far is a set of data (our taxi records) that we've joined to zip codes.
-# MAGIC * So we've enhanced our initial dataset with a spatial record, which is part of our "NYC Taxi 2035" goal.
+# MAGIC * So we've enhanced our initial dataset with a spatial record, which is part of our "NYC Taxi 2025" goal.
 # MAGIC * One easy thing to do is look at the stats to see if there are any homeruns for zip codes that should be prioritized.
 # MAGIC   * To get there, we'll do two things: group by zip code and count those hits
 # MAGIC   * Visualize our results to make sure it looks reasonable (there's helper code for that)
@@ -560,95 +560,15 @@ shape_plot_map_factors(pdf_sub, col_factor='value', col_viz='count_log10', use_l
 # COMMAND ----------
 
 # MAGIC %md
-# MAGIC # Want to find how to make a predictor
-# MAGIC ## Map to zip code
-# MAGIC doesn't work, too broad
+# MAGIC # Wrap-up
+# MAGIC That's it for this section of exploring data, what did we learn?
 # MAGIC 
-# MAGIC ## Revisit other data, map to NYC taxi
-# MAGIC looks good
+# MAGIC * How to explore data in Databricks with 'display' and other basics
+# MAGIC * Visualization of the data up front can help to discover some unusual properties
+# MAGIC * Adding data for external data can help to understand our own problem better
+# MAGIC * Data will often have intrinsic bias ands it's up to you to check and attempt to fix (next part)
 # MAGIC 
-# MAGIC ## Wrap-up
-# MAGIC * Save data for prediction with these constraints
-# MAGIC * need to explore a little for your best join
 # MAGIC 
-# MAGIC # Want to do learning to predict
+# MAGIC If you're hungry for more, proceed to the **02_predict_debiased** notebook next.
 # MAGIC 
-# MAGIC ## grouping by the right criterion
-# MAGIC * grouping to the right time
-# MAGIC 
-# MAGIC ## first evaluation
-# MAGIC * waht does first model tell me
-# MAGIC * good to go, right?
-# MAGIC 
-# MAGIC ## whoa, looks biased ....
-# MAGIC * against borough
-# MAGIC * aginst income
-# MAGIC * etc...
-
-# COMMAND ----------
-
-# MAGIC %md
-# MAGIC ## Check to see unique zip codes
-# MAGIC Uh oh, this includes all of NY state and that's not what we want
-
-# COMMAND ----------
-
-# MAGIC %md
-# MAGIC ## Now, join other data from taxi shape
-# MAGIC This will limit those zip codes that map to NYC taxi service, not the greater state...
-
-# COMMAND ----------
-
-df_taxi_zip = (df_taxi_indexed
-    # encode trip duration 
-    .withColumn('ride_duration', (F.col("dropoff_datetime") - F.col("pickup_datetime")).seconds)
-    # encode into hour parts
-    .withColumn('pickup_hour', F.hour(F.col('pickup_datetime')))
-    .withColumn('pickup_daypart', 
-                F.when(F.col('pickup_hour') < F.lit(5), 'twilight')  # 12a-5a
-                .when(F.col('pickup_hour') < F.lit(10), 'morning')  # 5a-10a
-                .when(F.col('pickup_hour') < F.lit(15), 'lunch')  # 10a-3p
-                .when(F.col('pickup_hour') < F.lit(18), 'afternoon')  # 3p-6p
-                .when(F.col('pickup_hour') < F.lit(18), 'night')  # 6p-11p
-                .otherwise('twilight'))  # 11p-12a
-    .withColumn('dropoff_hour', F.hour(F.col('dropoff_datetime')))
-    .withColumn('dropoff_daypart', 
-                F.when(F.col('dropoff_hour') < F.lit(5), 'twilight')  # 12a-5a
-                .when(F.col('dropoff_hour') < F.lit(10), 'morning')  # 5a-10a
-                .when(F.col('dropoff_hour') < F.lit(15), 'lunch')  # 10a-3p
-                .when(F.col('dropoff_hour') < F.lit(18), 'afternoon')  # 3p-6p
-                .when(F.col('dropoff_hour') < F.lit(18), 'night')  # 6p-11p
-                .otherwise('twilight'))  # 11p-12a
-    # encode into day of week
-    .withColumn('pickup_dow', F.dayofweek(F.col('pickup_datetime')))
-    .withColumn('pickup_weekpart', 
-                F.when((F.col('pickup_dow')==F.lit(1)) & (F.col('pickup_dow')==F.lit(7), 'weekend')  # Sun, Sat
-                .when((F.col('pickup_dow')==F.lit(6)) & (F.col('pickup_daypart')==F.lit('night'), 'weekend')  # Friday + night
-                .otherwise('weekday'))  # all other times
-    # encode into day of week
-    .withColumn('dropoff_dow', F.dayofweek(F.col('dropoff_datetime')))
-    .withColumn('dropoff_weekpart', 
-                F.when((F.col('dropoff_dow')==F.lit(1)) & (F.col('dropoff_dow')==F.lit(7), 'weekend')  # Sun, Sat
-                .when((F.col('dropoff_dow')==F.lit(6)) & (F.col('dropoff_daypart')==F.lit('night'), 'weekend')  # Friday + night
-                .otherwise('weekday'))  # all other times
-              
-)
-
-# COMMAND ----------
-
-# load raw geo
-# encode   latitude_cif', 'longitude_cif , resolution 11
-# load cab rides
-# encode pickup and drop off at 11
-# encode pickup time into morning / afternoon / evening
-# encode pickup time by day of week
-# partition before/after for train/test
-# predict the locations that will be most profitable morning / afternoon / evening on days of week
-# generate model that predicts by areas
-
-# overlay biggest demographic classes by age or race or income
-# compare disparities for evening pickups
-
-# solution 1 - create model to better sample
-
-# solution 2- postfix to hit min score
+# MAGIC Alternatively, you can jump into the **90_byo_experiment** notebook to experiment a little on your own data, but this is extra credit and we may not get enough time to jump into the section beforehand.
