@@ -25,7 +25,11 @@
 
 # COMMAND ----------
 
-# MAGIC %run ../features/featurestore_ops
+# MAGIC %run ../features/location_ops
+
+# COMMAND ----------
+
+# MAGIC %run ../features/taxi_dataset
 
 # COMMAND ----------
 
@@ -51,18 +55,31 @@
 # load geometry for zip codes and filter for NEW YORK state; 
 df_shape_tlc = spark.read.format('delta').load(CREDENTIALS['paths']['geometry_nyctaxi'])
 
+# path for cleaned stats
+path_stats = CREDENTIALS['paths']['nyctaxi_stats_cleaned']
+path_read = CREDENTIALS['paths']['nyctaxi_geo_sampled']
 
 # only admins write this one (it takes almost 10m to aggregate)
 if CREDENTIALS['constants']['EXPERIENCED_MODE'] and CREDENTIALS['constants']['WORKSHOP_ADMIN_MODE']:  
-    ### --- these are parts from the first notebook ---- 
     # encode the cells (to match zones)
     df_tlc_cells = shape_encode_h3cells(df_shape_tlc, ['zone'], CREDENTIALS['constants']['RESOLUTION_H3'], 'the_geom')
-    # load taxi data that has h3 coordinates
-    df_taxi_encoded = spark.read.format('delta').load(CREDENTIALS['paths']['nyctaxi_h3_sampled'])  # has h3
 
+    # load taxi data that has h3 coordinates --- NOTE, we're loading RAW files...
+    df_taxi_encoded = spark.read.format('delta').load(CREDENTIALS['paths']['nyctaxi_h3'])  # has h3
+
+    # repair missing data (e.g. missing h3, copy from the valid one if available)
+    df_taxi_indexed = (df_taxi_encoded
+        .withColumn('dropoff_h3', F.when(F.col('dropoff_h3').isNull() & F.col('pickup_h3').isNotNull(), F.col('pickup_h3'))
+                                  .otherwise(F.col('dropoff_h3')))
+        .withColumn('pickup_h3', F.when(F.col('pickup_h3').isNull() & F.col('dropoff_h3').isNotNull(), F.col('dropoff_h3'))
+                                  .otherwise(F.col('pickup_h3')))
+    )
+
+    ### --- these are parts from the first notebook ---- 
+    
     # join for both the pick-up and drop off
     df_taxi_indexed = (
-        point_intersect_h3cells(df_taxi_encoded.withColumnRenamed('pickup_h3', 'h3'),   # temp rename
+        point_intersect_h3cells(df_taxi_indexed.withColumnRenamed('pickup_h3', 'h3'),   # temp rename
                                 'pickup_latitude', 'pickup_longitude', 
                                 CREDENTIALS['constants']['RESOLUTION_H3'], df_tlc_cells, col_h3='h3')
         .withColumnRenamed('zone', 'pickup_zone')   # rename merged zip
@@ -77,9 +94,20 @@ if CREDENTIALS['constants']['EXPERIENCED_MODE'] and CREDENTIALS['constants']['WO
     )
 
     ### --- now we're adding new features ---- 
+    
+    # generate featurs
     df_taxi_indexed = (df_taxi_indexed
+        # .filter(F.col('total_amount').isNull())
+        # fill in the total fare 
+        .withColumn('total_amount', F.when(F.col('total_amount').isNotNull() & (F.col('total_amount') >= F.col('fare_amount')), 
+                                           F.col('total_amount'))
+                                    .otherwise(F.col('tolls_amount') + F.col('tip_amount')
+                                              + F.col('mta_tax') + F.col('extra') + F.col('fare_amount')))
+        .withColumn('has_toll', F.when(F.col('tolls_amount').isNotNull() & (F.col('tolls_amount')>F.lit(0.0)), F.lit(1))
+                                .otherwise(F.lit(0)))
         # encode trip duration 
-        .withColumn('ride_duration', (F.col("dropoff_datetime") - F.col("pickup_datetime")).seconds)
+        .withColumn('ride_duration', (F.col("dropoff_datetime").cast('int')) 
+                                      - F.col("pickup_datetime").cast('int'))
         # encode into hour parts
         .withColumn('pickup_hour', F.hour(F.col('pickup_datetime')))
         .withColumn('pickup_daypart', 
@@ -105,8 +133,78 @@ if CREDENTIALS['constants']['EXPERIENCED_MODE'] and CREDENTIALS['constants']['WO
                     .otherwise('weekday'))  # all other times
         # encode into longer term, like month and week of year
         .withColumn('month_of_year', F.month(F.col('pickup_datetime')))
-        .withColumn('week_of_year', F.weekofyear(F.col('pickup_datetime')))          
+        .withColumn('week_of_year', F.weekofyear(F.col('pickup_datetime')))
+        # drop bad data
+        .dropna(subset=['pickup_zone', 'dropoff_zone'])
+        # drop extra columns
+        .drop('vendor_id', 'dropoff_datetime', 'pickup_latitude', 'pickup_longitude',
+              'rate_code_id', 'store_and_fwd_flag', 'dropoff_longitude', 'dropoff_latitude', 'fare_amount', 
+              'extra', 'mata_tax', 'tolls_amount')
+        # finally, reapply the filter
+        .sample(CREDENTIALS['constants']['DATA_SUBSAMPLE_RATIO'], seed=42)
     )
+    
+    # dump to a new path
+    dbutils.fs.rm(path_read, True)  # destory entirely
+    df_taxi_indexed.write.format('delta').save(path_read)
+
+    
+    # --- perform aggregate again ---
+    
+    # preprocessing if admin (it's a lot of data)
+    path_read_raw = CREDENTIALS['paths']['nyctaxi_raw']
+    df_taxi_stats = (df_taxi_indexed
+        .withColumn('date_trunc', F.date_trunc('day', F.col('pickup_datetime')))
+        .groupBy('date_trunc').agg(
+            F.mean(F.col('total_amount')).alias('mean_total'),
+            F.max(F.col('total_amount')).alias('max_total'),
+            F.min(F.col('total_amount')).alias('min_total'),
+            F.count(F.col('pickup_datetime')).alias('volume'),        
+        )
+    )
+    dbutils.fs.rm(path_stats, True)  # destory entirely
+    df_taxi_stats.write.format('delta').save(path_stats)
+    
+    # end of data aggregate
+
+# read indexed features
+df_taxi_indexed = spark.read.format('delta').load(path_read)
+
+# load data, make sure it's sorted by date!
+taxi_plot_timeline(spark.read.format('delta').load(path_stats))
+    
+
+# COMMAND ----------
+
+display(df_taxi_indexed.filter(F.col('pickup_datetime') >= F.lit(dt.datetime(year=2016, day=1, month=1))))
+
+# COMMAND ----------
+
+# an example of aggregations requried to build a simple time plot
+if CREDENTIALS['constants']['EXPERIENCED_MODE'] and CREDENTIALS['constants']['WORKSHOP_ADMIN_MODE']:   
+    # preprocessing if admin (it's a lot of data)
+    path_read_raw = CREDENTIALS['paths']['nyctaxi_raw']
+    df_taxi_stats = (
+        taxi_filter_raw(spark.read.format('delta').load(path_read_raw))
+        .withColumn('date_trunc', F.date_trunc('day', F.col('pickup_datetime')))
+        .groupBy('date_trunc').agg(
+            F.mean(F.col('fare_amount')).alias('mean_total'),
+            F.max(F.col('fare_amount')).alias('max_total'),
+            F.min(F.col('fare_amount')).alias('min_total'),
+            F.count(F.col('pickup_datetime')).alias('volume'),        
+        )
+    )
+    dbutils.fs.rm(path_read, True)  # destory entirely
+    df_taxi_stats.write.format('delta').save(path_read)
+
+# load data, make sure it's sorted by date!
+plot_taxi_timeline(spark.read.format('delta').load(path_read))
+
+
+# COMMAND ----------
+
+display(df_taxi_indexed.limit(10))
+# display(df_taxi_indexed.filter(F.col('total_amount').isNull()).limit(100))
 
 # COMMAND ----------
 

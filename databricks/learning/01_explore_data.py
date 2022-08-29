@@ -47,6 +47,10 @@
 
 # COMMAND ----------
 
+# MAGIC %run ../features/taxi_dataset
+
+# COMMAND ----------
+
 # MAGIC %run ../features/location_ops
 
 # COMMAND ----------
@@ -77,24 +81,13 @@
 # statistics for the dataset.  We avoid the execution here because it takes several minutes
 # for each person to re-run the statistics on this large dataset
 
-def dataset_filter_raw(df_input):
-    import datetime as dt
-    # this is a helper function to filter out bad data by time range
-    return (df_input
-        .filter(F.col('pickup_datetime') >= F.lit(dt.datetime(year=2009, day=1, month=1)))  # after Jan 1, 2009
-        .filter(F.col('pickup_datetime') <= F.lit(dt.datetime(year=2020, day=1, month=1)))  # before Jan 1, 2020
-        .dropna(subset=['fare_amount'])  # drop any records that have empty/null fares
-        .filter(F.col('fare_amount') >= F.lit(0.0))  # no negative-dollar fares
-        .filter(F.col('fare_amount') <= F.lit(20000.0))  # no super-expensive fares
-    )
-
 # an example of aggregations requried to build a simple time plot
 path_read = CREDENTIALS['paths']['nyctaxi_stats']
 if CREDENTIALS['constants']['EXPERIENCED_MODE'] and CREDENTIALS['constants']['WORKSHOP_ADMIN_MODE']:   
     # preprocessing if admin (it's a lot of data)
     path_read_raw = CREDENTIALS['paths']['nyctaxi_raw']
     df_taxi_stats = (
-        dataset_filter_raw(spark.read.format('delta').load(path_read_raw))
+        taxi_filter_raw(spark.read.format('delta').load(path_read_raw))
         .withColumn('date_trunc', F.date_trunc('day', F.col('pickup_datetime')))
         .groupBy('date_trunc').agg(
             F.mean(F.col('fare_amount')).alias('mean_total'),
@@ -107,41 +100,7 @@ if CREDENTIALS['constants']['EXPERIENCED_MODE'] and CREDENTIALS['constants']['WO
     df_taxi_stats.write.format('delta').save(path_read)
 
 # load data, make sure it's sorted by date!
-pdf_taxi_stats = (spark.read.format('delta').load(path_read)
-    .toPandas()
-    .sort_values('date_trunc')
-)
-
-# graph example from great plotting how-to site...
-#    https://www.python-graph-gallery.com/line-chart-dual-y-axis-with-matplotlib
-
-# https://matplotlib.org/stable/gallery/color/named_colors.html
-COLOR_VOLUME = 'tab:blue'
-COLOR_PRICE = 'tab:orange'
-
-fig, ax1 = plt.subplots(figsize=(14, 8))
-ax2 = ax1.twinx()
-ax1.bar(pdf_taxi_stats['date_trunc'], pdf_taxi_stats['volume'], color=COLOR_VOLUME, width=1.0)
-ax2.plot(pdf_taxi_stats['date_trunc'], pdf_taxi_stats['mean_total'], color=COLOR_PRICE, lw=4)
-# want to see some other weird stats? min/max are crazy (but we'll fix that later)
-# ax2.plot(pdf_taxi_stats['date_trunc'], pdf_taxi_stats['min_total'], color='violet', lw=2)
-# ax2.plot(pdf_taxi_stats['date_trunc'], pdf_taxi_stats['max_total'], color='firebrick', lw=2)
-
-ax1.set_xlabel("Date")
-ax1.set_ylabel("Total Ride Volume", color=COLOR_VOLUME, fontsize=14)
-ax1.tick_params(axis="y", labelcolor=COLOR_VOLUME)
-
-ax2.set_ylabel("Average Total Fare ($)", color=COLOR_PRICE, fontsize=14)
-ax2.tick_params(axis="y", labelcolor=COLOR_PRICE)
-
-fig.autofmt_xdate()
-fig.suptitle("NYC Taxi Volume and Average Fares", fontsize=20)
-
-
-# compute some overall stats
-fn_log(f"Date Range: {pdf_taxi_stats['date_trunc'].min()} - {pdf_taxi_stats['date_trunc'].max()} (total days {len(pdf_taxi_stats)})")
-fn_log(f"Total Rides: {pdf_taxi_stats['volume'].sum()}")
-fn_log(f"Avg Fare: {pdf_taxi_stats['mean_total'].mean()}")
+taxi_plot_timeline(spark.read.format('delta').load(path_read))
 
 
 
