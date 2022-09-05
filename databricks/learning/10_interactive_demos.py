@@ -12,26 +12,20 @@
 # COMMAND ----------
 
 # MAGIC %md 
-# MAGIC ## Demographic Exploration
-# MAGIC Demographics are senstive, but in aggregate, they give a peek at the population that you're serving in an area.
-# MAGIC From the table above, we have subset of columns (personal addresses and names have been removed) that describe 
-# MAGIC several characterstics of the inhabitant. 
+# MAGIC ## Interactive Demographic Implications
+# MAGIC Using aggregated demographics, this notebook provides a single place to look at the imapct of several models
+# MAGIC by taxi zone.  This notebook is meant as a companion for the previously execited notebooks that build
+# MAGIC an understanding of geography, demographics, and model building.
 # MAGIC 
-# MAGIC *NOTE: These demographics are sourced from an outside vendor so it's outside 
-# MAGIC the scope of this workshop to focus on collection or class namings.*
+# MAGIC This notebook uses [Databricks widgets](https://docs.databricks.com/notebooks/widgets.html) to allow a semi-interactive
+# MAGIC exploration of models and precompted demographics.
 # MAGIC 
-# MAGIC In this notebook, we refer to these as 'demographic factors' and will experiment with joining various factors to
-# MAGIC our source data.
-# MAGIC * `gnrt` - the "generation" (by age) of the individual (e.g. "Millenials", "GenX", etc.)
-# MAGIC * `ethnc_grp` - the ethnic group of the individual (e.g. "Asian", "Hispanic", etc.)
-# MAGIC * `gndr` - the gender of the individual (e.g. "F", or "M")
-# MAGIC * `edctn` - the education level of the individual (e.g. "Bach Degree - Likely", "Some College - Likely", etc.)
-# MAGIC * `marital_status_cif` - marital status (e.g. "5M" or "5S")
-# MAGIC * `hshld_incme_grp` - the group household income (e.g. "$150K-$249K", "<$50K", etc.)
-# MAGIC 
-# MAGIC For those techncially saavy individuals, we are **not** aggregating by a single household and are instead getting
-# MAGIC numbers for everyone that lives in an area.  Numerically that means households that have multiple individuals 
-# MAGIC get more weight, but this may only matter if comparing factors like *household income* (`hshld_incme_grp`).
+# MAGIC * ***demographic*** - Using a subset of demographics that are aggregated by NYC T&LC zone, display the impact
+# MAGIC   of the specified model on that zone. 
+# MAGIC * ***model*** - Coupled to modeling choses in a notebook, various models are used to compute whether or not a ride
+# MAGIC   is recommended.  These recommendations are applied to a test dataset and the resultant descisions are used
+# MAGIC   to compute a disparity (more rides or less rides as a [z-score](https://en.wikipedia.org/wiki/Standard_score)) 
+# MAGIC   versus all other zones in the area.
 
 # COMMAND ----------
 
@@ -43,8 +37,10 @@
 dbutils.widgets.removeAll()
 
 # create model map
-list_model_map = [['00 Raw Demographics', None, 'Difference'], 
-                  ['01 Raw Fare Total', 'nyctaxi_h3_zones', 'Historical Rides']]
+list_model_map = [['Raw Demographics (n1.e3)', None, 'Difference'], 
+                  ['Refined Fare Total (n2.e4)', 'nyctaxi_h3_historical', 'Ride Disparity'],
+                  ['Learned Fare Total (n2.e5)', 'nyctaxi_h3_learn_base', 'Ride Disparity'],
+                 ]
 model_sel_last = None
 dbutils.widgets.dropdown("model", list_model_map[0][0], [x[0] for x in list_model_map])
 
@@ -82,23 +78,26 @@ dbutils.widgets.dropdown("demographic", list_demos[0], list_demos)
 
 # update ride count by the currently selected model
 model_sel = dbutils.widgets.get("model")
-if model_sel_last != model_sel:
+if True: #  model_sel_last != model_sel:   # avoid recompute if model didn't chage
     model_path = [x[1] for x in list_model_map if x[0]==model_sel][0]  # find the path part of selected model
     model_sel_viz = [x[2] for x in list_model_map if x[0]==model_sel][0]  # find the graph title part
+    fn_log(f"Updating to new model {model_sel}... ({model_path})")
     model_sel_last = model_sel
-    if model_path is None:  # if no ride count, just create sample equal in all ones
-        df_rides = df_demos_pivot_all.select('zone').withColumn('_count_rides', F.lit(1))
-    else:
+    if model_path is None:  # if no ride count, just create zero z-score for disparity
+        df_rides = df_demos_pivot_all.select('zone').withColumn('rides_z', F.lit(0))
+    else:   # otherwise, compute z-score for disparity measure
         path_read = CREDENTIALS['paths'][model_path]
-        df_rides = (spark.read.format('delta').load(path_read)
-            .select('zone', F.col('count').alias('_count_rides'))
+        df_rides = spark.read.format('delta').load(path_read)
+        # note that there is some column renaming to perform first...
+        row_stat_rides = df_rides.select(F.mean('volume').alias('mean'), F.stddev('volume').alias('std')).collect()[0]
+        df_rides = (df_rides
+            .withColumnRenamed('pickup_zone', 'zone')
+            .withColumn("rides_z", (F.col('volume') - F.lit(row_stat_rides['mean']))/F.lit(row_stat_rides['std']))
+            .withColumnRenamed('volume', 'rides')
+            .select('zone', 'rides', 'rides_z')
         )
     # recompute the demo-based counts by ride scalar
-    df_demos_pivot = (df_demos_pivot_all
-        .join(df_rides, ['zone'])
-        .withColumnRenamed('count', '_count_demos')
-        .withColumn('count', F.col('_count_demos') * F.col('_count_rides'))
-    )
+    df_demos_pivot = df_demos_pivot_all.join(df_rides, ['zone'])
 
 # Complete for visilzuation    
 demo_sel = dbutils.widgets.get("demographic")
@@ -111,11 +110,10 @@ pdf_plot_demo = (df_demos_pivot
     .toPandas()
 )
 pdf_plot_demo['geometry'] = pdf_plot_demo['the_geom'].apply(lambda x: wkt.loads(x))
-del pdf_plot_demo['the_geom']
 
 shape_plot_map_factors(pdf_plot_demo, col_factor='value', col_viz='count_log10', use_log=True,
                        txt_title=f"{demo_sel} {model_sel_viz} by Zone (%)", col_norm='zone',
-                       gdf_background=pdf_shape_states)
+                       col_disparity='rides_z', gdf_background=pdf_shape_states)
 
 # COMMAND ----------
 

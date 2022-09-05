@@ -56,7 +56,7 @@
 # COMMAND ----------
 
 # MAGIC %md
-# MAGIC # Exploring our source data... (exercise 2)
+# MAGIC # Exploring our source data...
 # MAGIC * This data comes from a 2009 data dump from [NYC Taxi and Limousine service](https://www1.nyc.gov/site/tlc/about/tlc-trip-record-data.page).
 # MAGIC * We're loading our data from an ADLS source defined in our settings file, but you can upload your own via the [Blackbird self-service tool](https://blackbird.SERVICE_SITE/).
 # MAGIC      * There are even instructions about [loading a CSV sheet](https://data.DOMAIN/resources/knowledge-base/28918666-8b4e-11ec-9463-0f9d673e50a5) (Excel friendly)
@@ -328,7 +328,7 @@ shape_plot_map(pdf_sub, col_viz='count_log10', txt_title=f"Zone Log-Count ({num_
 # COMMAND ----------
 
 # MAGIC %md
-# MAGIC ## Data Exploration Conclusions
+# MAGIC ## n1.e2 - Data Exploration Conclusions
 # MAGIC Not too bad, right?  We've come to a few decisions about how to represent our data....
 # MAGIC 
 # MAGIC * Group into zones as defined by the NYC T&LC by location
@@ -339,7 +339,7 @@ shape_plot_map(pdf_sub, col_viz='count_log10', txt_title=f"Zone Log-Count ({num_
 # COMMAND ----------
 
 # MAGIC %md
-# MAGIC # Exploring Customer Data Joins (exercise 3)
+# MAGIC # n1.e3 - Exploring Customer Data Joins
 # MAGIC 
 # MAGIC Now that we have awareness of how to group our data, let's link it to customers.
 # MAGIC * Within the company, there are lots of extra data that can add insights to these explorations.

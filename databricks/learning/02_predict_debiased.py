@@ -199,7 +199,7 @@ taxi_plot_timeline(spark.read.format('delta').load(path_stats))
 # COMMAND ----------
 
 # MAGIC %md
-# MAGIC ### Features and Label Space
+# MAGIC ### n2.e4 - Features and Label Space
 # MAGIC 
 # MAGIC Now there's the question of a *label* or target to predict.  In a traditional business question, this may be
 # MAGIC easier to derive...
@@ -316,6 +316,28 @@ if CREDENTIALS['constants']['EXPERIENCED_MODE'] and CREDENTIALS['constants']['WO
     dbutils.fs.rm(path_read, True)  # no delta history, please
     df_labeled_agg.write.format('delta').save(path_read)   # save for workshop
 
+    # also write aggregated stats by the zone
+    df_zone_historical = (df_labeled
+        .filter(F.col('dataset')==F.lit('test'))
+        # do aggregate, but make temp copy for those in top category
+        .withColumn('_top_volume', F.when(F.col('is_top')==F.lit(1), F.col('volume'))
+                                   .otherwise(F.lit(0)))
+        .withColumn('_top_total', F.when(F.col('is_top')==F.lit(1), F.col('total_amount'))
+                                   .otherwise(F.lit(0)))
+        .groupBy('pickup_zone').agg(
+            F.mean(F.col('total_amount')).alias('mean_total'),
+            F.mean(F.col('_top_total')).alias('mean'),
+            F.sum(F.col('total_amount')).alias('sum_total'),
+            F.sum(F.col('_top_total')).alias('sum'),
+            F.sum(F.col('volume')).alias('volume_total'),
+            F.sum(F.col('_top_volume')).alias('volume'),
+        )
+    )
+    # clobber historical file, rewrite
+    dbutils.fs.rm(CREDENTIALS['paths']['nyctaxi_h3_historical'], True)
+    df_zone_historical.write.format('delta').save(CREDENTIALS['paths']['nyctaxi_h3_historical'])
+
+
 df_labeled_agg = spark.read.format('delta').load(path_read)  # speed-up without heavy compute
 fig, axes = plt.subplots(3, 1, figsize=(8, 16))
 
@@ -360,9 +382,8 @@ axes[2].set_ylabel('log(ride count)')
 
 # COMMAND ----------
 
-# preprocessing if admin (it's a lot of data)
+# preprocessing with simple group render (aggregate not too pad)
 pdf_stat_label = (df_labeled
-    .withColumn('date_trunc', F.date_trunc('day', F.col('pickup_datetime')))
     .groupBy('date_trunc').agg(
         F.mean(F.col('total_amount')).alias('mean_total'),
         F.mean(F.col('total_amount') * F.col('is_top')).alias('mean_demand'),
@@ -396,22 +417,26 @@ taxi_plot_timeline(pdf_stat_label, col_value='mean_total', vol_volume='volume', 
 
 # COMMAND ----------
 
-col_label = 'is_top'
-list_features = ['passenger_count', 'trip_distance', 'total_amount', 'dropoff_zone', 'ride_duration', 'pickup_hour', 'dropoff_hour', 'dropoff_daypart', 'day_of_week', 'weekpart', 'month_of_year', 'week_of_year', 'pickup_zone', 'pickup_daypart']
+# experienced mode derivation of data (about 15-25m)
+if CREDENTIALS['constants']['EXPERIENCED_MODE'] and CREDENTIALS['constants']['WORKSHOP_ADMIN_MODE']:
 
-# comprehensive check for impact by data size
-for sample_ratio in [0.05, 0.5, 0.8]:
-    df_train = (
-        df_labeled.filter(F.col('dataset')==F.lit('train'))
-        .select(list_features+[col_label])
-        .sample(sample_ratio, seed=42)
-    )
-    df_test = df_labeled.filter(F.col('dataset')==F.lit('test'))
+    col_label = 'is_top'
+    list_features = ['passenger_count', 'trip_distance', 'total_amount', 'dropoff_zone', 'ride_duration', 'pickup_hour', 'dropoff_hour', 'dropoff_daypart', 'day_of_week', 'weekpart', 'month_of_year', 'week_of_year', 'pickup_zone', 'pickup_daypart']
 
-    pipeline, best_hyperparam = modeling_gridsearch(df_train, col_label, num_folds=1)
-    best_hyperparam['training_fraction'] = sample_ratio
-    run_name, df_pred = modeling_train(df_train, df_test, col_label, "taxi_popular", 
-                                       pipeline, best_hyperparam, list_inputs=list_features)
+    # comprehensive check for impact by data size
+    for sample_ratio in [0.05] # , 0.5, 0.8]:   # we tried several sample ratios and they were all about the same
+        df_train = (
+            df_labeled.filter(F.col('dataset')==F.lit('train'))
+            .select(list_features+[col_label])
+            .sample(sample_ratio, seed=42)
+        )
+        df_test = df_labeled.filter(F.col('dataset')==F.lit('test'))
+
+        pipeline, best_hyperparam = modeling_gridsearch(df_train, col_label, num_folds=1)
+        best_hyperparam['training_fraction'] = sample_ratio
+        run_name, df_pred = modeling_train(df_train, df_test, col_label, "taxi_popular", 
+                                           pipeline, best_hyperparam, list_inputs=list_features)
+
 
 
 # COMMAND ----------

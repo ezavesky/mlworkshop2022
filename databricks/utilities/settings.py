@@ -162,6 +162,9 @@ CREDENTIALS['paths'].update({
     'nyctaxi_geo_sampled': f"{CREDENTIALS['paths']['databricks_dataset']}/experiment/nyctaxi_geo_sampled",  # geo+features write
     'nyctaxi_geo_labeled': f"{CREDENTIALS['paths']['databricks_dataset']}/experiment/nyctaxi_geo_labeled",  # geo+features+label write
     'nyctaxi_stats_label': f"{CREDENTIALS['paths']['databricks_dataset']}/experiment/nyctaxi_stats_label",  # check of label stats
+    'nyctaxi_h3_historical': f"{CREDENTIALS['paths']['databricks_dataset']}/experiment/nyctaxi_h3_historical",  # zone agg data (test only)
+    'nyctaxi_h3_learn_base': f"{CREDENTIALS['paths']['databricks_dataset']}/experiment/nyctaxi_h3_learn_base",  # zone agg data (base learning)
+    'nyctaxi_h3_learn_sample': f"{CREDENTIALS['paths']['databricks_dataset']}/experiment/nyctaxi_h3_learn_sample",  # 
 })
 
 # need to have time constants restructed?
