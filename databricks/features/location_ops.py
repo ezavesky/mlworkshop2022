@@ -111,7 +111,22 @@ def shape_plot_map(gdf_data, col_viz=None, txt_title='original plot', gdf_backgr
 
 # helper to plot the variants of one population...
 def shape_plot_map_factors(gdf_data, col_factor, col_viz, txt_title='original plot', 
-                           use_log=True, col_norm=None, gdf_background=None):
+                           use_log=True, col_norm=None, col_disparity=None, gdf_background=None):
+    """
+    Kind of a complicated shape-plotting method.  It takes an input pandas DataFrame, does a grouping
+    by the column `col_factor` and plots values in `col_viz`.  Optionally, you can apply a normalization
+    using the column `col_norm` such that values in `col_viz` are transformed into z-scores before plotting.
+    To include a background shape (as grey), pass a GeoPandas dataframe into `gdf_background`.  Finally,
+    pass in `col_disparity` to compute a "disparity" (compute `col_viz` - `col_disparity`) before plotting.
+        Ex 1.   fn(df, 'education', 'values', 'population by education level')  -- demographics by 'values'
+        Ex 2.   fn(df, 'education', 'values_log', 'population by education level', use_log=True)  -- log-plot of above
+        Ex 3.   fn(df, 'education', 'values', 'education level by zone', col_norm='zone')  -- z-score of education by zone
+        Ex 4.   fn(df, 'education', 'values', 'education level by zone', col_norm='zone', col_disparity='rides')
+                   -- z-score of education (minus value of rides) by zone
+                   
+    NOTE: `col_disparity` is never post-processed in this function, it's assumed to be in the same unit
+          as `col_viz` so some precompute may be necessary.
+    """
     import numpy as np
     from h3ronpy import vector, util
     import matplotlib.colors
@@ -164,6 +179,10 @@ def shape_plot_map_factors(gdf_data, col_factor, col_viz, txt_title='original pl
     xmax = gdf_copy[col_viz].max()
     fn_log(f"[shape_plot_map] Input columns: {gdf_copy.columns}; factors: {dict_factors}; extents [{xmin}, {xmax}]")
 
+    # allow disparity rendering?
+    if col_disparity is not None and col_disparity in gdf_copy.columns:
+        gdf_copy[col_viz] -= gdf_copy[col_disparity]
+    
     # original source - https://towardsdatascience.com/uber-h3-for-data-analysis-with-python-1e54acdcc908
     figure, axis = plt.subplots(2, 2, figsize=(16, 12))
     norm_map = matplotlib.colors.Normalize(xmin, xmax, True)
