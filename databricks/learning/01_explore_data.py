@@ -158,14 +158,7 @@ df_shape_zip = (spark.read.format('delta').load(CREDENTIALS['paths']['geometry_z
 )
 df_zip_cells = shape_encode_h3cells(df_shape_zip, ['zip'], CREDENTIALS['constants']['RESOLUTION_H3'], 'geometry')
 
-# load geometry for NEW YORK state; convert to geometry prsentation format
-pdf_shape_states = (spark.read.format('delta').load(CREDENTIALS['paths']['geometry_state'])
-    .filter(F.col('stusps')==F.lit('NY'))
-    .toPandas()
-)
-pdf_shape_states['geometry'] = pdf_shape_states['geometry'].apply(lambda x: wkt.loads(x))
-
-# load geometry for NEW YORK state; convert to geometry prsentation format
+# load geometry for NEW YORK state; convert to geometry presentation format
 pdf_shape_states = (spark.read.format('delta').load(CREDENTIALS['paths']['geometry_state'])
     .filter(F.col('stusps')==F.lit('NY'))
     .toPandas()
