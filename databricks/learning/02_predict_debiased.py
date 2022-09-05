@@ -186,7 +186,14 @@ df_taxi_indexed = spark.read.format('delta').load(path_read)
 
 # load data, make sure it's sorted by date!
 taxi_plot_timeline(spark.read.format('delta').load(path_stats))
-    
+df_date_summary = (df_taxi_indexed
+    .groupBy('dataset').agg(
+        F.min(F.col('date_trunc')).alias('date_earliest'),
+        F.max(F.col('date_trunc')).alias('date_latest'),
+        F.count(F.col('date_trunc')).alias('date_count'),
+    )
+)
+display(df_date_summary)
 
 # COMMAND ----------
 
@@ -199,7 +206,7 @@ taxi_plot_timeline(spark.read.format('delta').load(path_stats))
 # COMMAND ----------
 
 # MAGIC %md
-# MAGIC ### n2.e4 - Features and Label Space
+# MAGIC ### n2.e6 - Features and Label Space
 # MAGIC 
 # MAGIC Now there's the question of a *label* or target to predict.  In a traditional business question, this may be
 # MAGIC easier to derive...
@@ -410,6 +417,18 @@ taxi_plot_timeline(pdf_stat_label, col_value='mean_total', vol_volume='volume', 
 
 # MAGIC %md
 # MAGIC # Simple Classifier
+# MAGIC 
+# MAGIC Now that we've defined the features, labels, and partitions (train, validate, test) for our dataset,
+# MAGIC we're ready to train a model for prediction.  To keep this workshop and notebook at an approachable
+# MAGIC level, we've hidden **a lot** of the underlying ML tricks, but that's okay because things like 
+# MAGIC [AutoML](https://en.wikipedia.org/wiki/Automated_machine_learning) is increasingly an option to create
+# MAGIC models from data alone.  
+# MAGIC 
+# MAGIC However, if you're curious to see what's going on, explore the script `features/modeling.py` for a full
+# MAGIC walk through of the different functions and their use.
+# MAGIC * [image source](https://upload.wikimedia.org/wikipedia/commons/thumb/f/fe/Kernel_Machine.svg/640px-Kernel_Machine.svg.png)
+# MAGIC 
+# MAGIC <img src='https://upload.wikimedia.org/wikipedia/commons/thumb/f/fe/Kernel_Machine.svg/640px-Kernel_Machine.svg.png' width='400px' title="ML Model Boundary" />
 
 # COMMAND ----------
 
@@ -417,43 +436,73 @@ taxi_plot_timeline(pdf_stat_label, col_value='mean_total', vol_volume='volume', 
 
 # COMMAND ----------
 
+# MAGIC %md
+# MAGIC ## n2.e7 MlFlow for Model Tracking
+# MAGIC Let's take a quick moment to explore a common issue in ML model development: tracking your models!
+# MAGIC 
+# MAGIC Luckily, Databricks includes native hooks to [mlflow](https://mlflow.org/) and we use it heavily in the
+# MAGIC model learning functions above.  
+# MAGIC 
+# MAGIC In our trained model, we'll create a simple [RandomForest classifier](https://spark.apache.org/docs/latest/api/python/reference/api/pyspark.ml.classification.RandomForestClassifier.html#pyspark.ml.classification.RandomForestClassifier) using Pyspark's DataFrame-based [Mllib](https://spark.apache.org/docs/latest/api/python/reference/pyspark.ml.html).
+
+# COMMAND ----------
+
+# pull out our test data from the labeled dataset
+df_test = df_labeled.filter(F.col('dataset')==F.lit('test'))
+
 # experienced mode derivation of data (about 15-25m)
 if CREDENTIALS['constants']['EXPERIENCED_MODE'] and CREDENTIALS['constants']['WORKSHOP_ADMIN_MODE']:
-
     col_label = 'is_top'
     list_features = ['passenger_count', 'trip_distance', 'total_amount', 'dropoff_zone', 'ride_duration', 'pickup_hour', 'dropoff_hour', 'dropoff_daypart', 'day_of_week', 'weekpart', 'month_of_year', 'week_of_year', 'pickup_zone', 'pickup_daypart']
 
     # comprehensive check for impact by data size
-    for sample_ratio in [0.05] # , 0.5, 0.8]:   # we tried several sample ratios and they were all about the same
+    # list_ratio_test = [0.05, 0.5, 0.8]
+    list_ratio_test = [0.05]   # we tried several sample ratios and they were all about the same
+    for sample_ratio in list_ratio_test:
         df_train = (
             df_labeled.filter(F.col('dataset')==F.lit('train'))
             .select(list_features+[col_label])
             .sample(sample_ratio, seed=42)
         )
-        df_test = df_labeled.filter(F.col('dataset')==F.lit('test'))
 
         pipeline, best_hyperparam = modeling_gridsearch(df_train, col_label, num_folds=1)
         best_hyperparam['training_fraction'] = sample_ratio
         run_name, df_pred = modeling_train(df_train, df_test, col_label, "taxi_popular", 
                                            pipeline, best_hyperparam, list_inputs=list_features)
 
+# now let's actually load and execute the model on our TEST data
+df_predict = model_predict(df_test, "taxi_popular")
+path_read = CREDENTIALS['paths']['nyctaxi_h3_learn_base']
+if CREDENTIALS['constants']['EXPERIENCED_MODE'] and CREDENTIALS['constants']['WORKSHOP_ADMIN_MODE']:
+    # also write predicted, aggregated stats by the zone
+    df_zone_predict = (df_predict
+        # do aggregate, but make temp copy for those in top category
+        .withColumn('_pred_volume', F.when(F.col('is_top_predict')==F.lit(1), F.col('volume'))
+                                   .otherwise(F.lit(0)))
+        .withColumn('_pred_total', F.when(F.col('is_top_predict')==F.lit(1), F.col('total_amount'))
+                                   .otherwise(F.lit(0)))
+        .withColumn('_top_volume', F.when(F.col('is_top')==F.lit(1), F.col('volume'))
+                                   .otherwise(F.lit(0)))
+        .withColumn('_top_total', F.when(F.col('is_top')==F.lit(1), F.col('total_amount'))
+                                   .otherwise(F.lit(0)))
+        .groupBy('pickup_zone').agg(
+            F.mean(F.col('total_amount')).alias('mean_total'),
+            F.mean(F.col('_pred_total')).alias('mean'),
+            F.sum(F.col('total_amount')).alias('sum_total'),
+            F.sum(F.col('_pred_total')).alias('sum'),
+            F.sum(F.col('volume')).alias('volume_total'),
+            F.sum(F.col('_pred_volume')).alias('volume'),
+        )
+    )
+    # clobber historical file, rewrite
+    dbutils.fs.rm(path_read, True)
+    df_zone_predict.write.format('delta').save(path_read)
 
+df_zone_predict = spark.read.format('delta').load(path_read)
 
 # COMMAND ----------
 
-list_feature_keep = ['pickup_zone', 'pickup_daypart', 'is_top', 'is_top_predict']
-df_predict = model_predict(df_test.limit(10), "taxi_popular").select(list_feature_keep)
-display(df_predict)
-
-
-# dbfs:/user/ez2685/experiments/MLWS22-ez2685/8927f9b932c043edb5d1442be37a8621/artifacts/taxi_popular
-
-# COMMAND ----------
-
-# predict + compare to prior model
-# measure gains for different demographics
 # plot gains / losses for each demographic (choose top N?)
-# (repeat) add features, measure + plot gains
 # (repeat) add pre-filtering by sampling, measure + plot gains
 # (repeat) add post-filtering by bias, measure + plot gains
 # (repeat) add pre-processing for feature adjustment by bias, measure + plot gains
@@ -464,58 +513,6 @@ display(df_predict)
 # from pyspark.ml.tuning import CrossValidatorModel
 # cvModel = CrossValidatorModel.read().load('/users/ez2685/cvmodel')
 # print(cvModel.extractParamMap())
-
-# COMMAND ----------
-
-path_read = CREDENTIALS['paths']['nyctaxi_h3_zones']
-
-# only admins write this one (it takes almost 10m to aggregate)
-if CREDENTIALS['constants']['EXPERIENCED_MODE'] and CREDENTIALS['constants']['WORKSHOP_ADMIN_MODE']:  
-    # now filter to relevant zips (those found in our taxi data)
-    df_zones = (df_taxi_indexed
-        .select(F.col('pickup_zone').alias('zone'))   # first sum by pickup
-        .groupBy('zone').agg(F.count('zone').alias('count'))
-        .union(df_taxi_indexed.select(F.col('dropoff_zone').alias('zone'))   # and then by dropoff
-            .groupBy('zone').agg(F.count('zone').alias('count'))
-        )
-        .groupBy('zone').agg(F.sum('count').alias('count'))  # sum them all together
-        .withColumnRenamed('zone', '_zone_join')
-    )
-    df_zones = (df_zones
-        .join(df_shape_tlc, df_zones['_zone_join']==df_shape_tlc['zone'], 'inner')
-        .drop('_zone_join')
-        .withColumn('count_log10', F.log(10.0, F.col('count')))
-    )
-    dbutils.fs.rm(path_read, True)
-    df_zones.write.format('delta').save(path_read)
-
-fn_log("Grouping into a plottable dataframe...")
-df_zones = spark.read.format('delta').load(path_read)
-pdf_sub = df_zones.toPandas().sort_values(by='count', ascending=False)
-pdf_sub['geometry'] = pdf_sub['geometry'].apply(lambda x: wkt.loads(x))
-num_total = len(pdf_sub['count'])
-shape_plot_map(pdf_sub, col_viz='count_log10', txt_title=f"Zone Log-Count ({num_total} total zones)", 
-               gdf_background=pdf_shape_states)
-
-
-# COMMAND ----------
-
-# MAGIC %md
-# MAGIC # Want to find how to make a predictor
-# MAGIC 
-# MAGIC # Want to do learning to predict
-# MAGIC 
-# MAGIC ## grouping by the right criterion
-# MAGIC * grouping to the right time
-# MAGIC 
-# MAGIC ## first evaluation
-# MAGIC * waht does first model tell me
-# MAGIC * good to go, right?
-# MAGIC 
-# MAGIC ## whoa, looks biased ....
-# MAGIC * against borough
-# MAGIC * aginst income
-# MAGIC * etc...
 
 # COMMAND ----------
 

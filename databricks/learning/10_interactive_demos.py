@@ -37,9 +37,9 @@
 dbutils.widgets.removeAll()
 
 # create model map
-list_model_map = [['Raw Demographics (n1.e3)', None, 'Difference'], 
-                  ['Refined Fare Total (n2.e4)', 'nyctaxi_h3_historical', 'Ride Disparity'],
-                  ['Learned Fare Total (n2.e5)', 'nyctaxi_h3_learn_base', 'Ride Disparity'],
+list_model_map = [['Raw Demographics (n1.e5)', None, 'Difference'], 
+                  ['Refined Fare Total (n2.e6)', 'nyctaxi_h3_historical', 'Ride Disparity'],
+                  ['Learned Fare Total (n2.e7)', 'nyctaxi_h3_learn_base', 'Ride Disparity'],
                  ]
 model_sel_last = None
 dbutils.widgets.dropdown("model", list_model_map[0][0], [x[0] for x in list_model_map])
@@ -78,7 +78,7 @@ dbutils.widgets.dropdown("demographic", list_demos[0], list_demos)
 
 # update ride count by the currently selected model
 model_sel = dbutils.widgets.get("model")
-if True: #  model_sel_last != model_sel:   # avoid recompute if model didn't chage
+if model_sel_last != model_sel:   # avoid recompute if model didn't chage
     model_path = [x[1] for x in list_model_map if x[0]==model_sel][0]  # find the path part of selected model
     model_sel_viz = [x[2] for x in list_model_map if x[0]==model_sel][0]  # find the graph title part
     fn_log(f"Updating to new model {model_sel}... ({model_path})")

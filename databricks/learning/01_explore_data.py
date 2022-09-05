@@ -185,7 +185,7 @@ df_taxi_indexed = (
 # COMMAND ----------
 
 # MAGIC %md
-# MAGIC ## Flex your CDS muscle!
+# MAGIC ## n1.e3 Flex your CDS muscle!
 # MAGIC Remember, to be a CDS, one doesn't need to know how to program or train ML models to be a **CDS**!  Let's drive that point home.
 # MAGIC * What we have so far is a set of data (our taxi records) that we've joined to zip codes.
 # MAGIC * So we've enhanced our initial dataset with a spatial record, which is part of our "NYC Taxi 2025" goal.
@@ -328,7 +328,7 @@ shape_plot_map(pdf_sub, col_viz='count_log10', txt_title=f"Zone Log-Count ({num_
 # COMMAND ----------
 
 # MAGIC %md
-# MAGIC ## n1.e2 - Data Exploration Conclusions
+# MAGIC ## n1.e4 Data Exploration Conclusions
 # MAGIC Not too bad, right?  We've come to a few decisions about how to represent our data....
 # MAGIC 
 # MAGIC * Group into zones as defined by the NYC T&LC by location
@@ -339,7 +339,7 @@ shape_plot_map(pdf_sub, col_viz='count_log10', txt_title=f"Zone Log-Count ({num_
 # COMMAND ----------
 
 # MAGIC %md
-# MAGIC # n1.e3 - Exploring Customer Data Joins
+# MAGIC # n1.e5 - Exploring Customer Data Joins
 # MAGIC 
 # MAGIC Now that we have awareness of how to group our data, let's link it to customers.
 # MAGIC * Within the company, there are lots of extra data that can add insights to these explorations.
