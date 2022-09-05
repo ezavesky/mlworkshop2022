@@ -14,6 +14,9 @@
 from pyspark.ml.util import DefaultParamsReadable, DefaultParamsWritable
 from pyspark import keyword_only
 import numpy as np
+from pyspark.ml.param import Params, Param, TypeConverters
+from pyspark.ml.param.shared import HasLabelCol, HasInputCol, HasPredictionCol, HasOutputCol
+from pyspark.ml import Estimator, Model
 
 # COMMAND ----------
 
@@ -32,11 +35,11 @@ class HasTunedThreshold(Params):
         return self.getOrDefault(self.tunedThreshold)
     
     
-class TunedThreshold(Estimator, HasLabelCol, HasPredictionCol, HasInputCol,
+class TunedThreshold(Estimator, HasLabelCol, HasPredictionCol, HasInputCol, HasOutputCol,
                       DefaultParamsReadable, DefaultParamsWritable):
 
     @keyword_only
-    def __init__(self, labelCol=None, inputCol=None, predictionCol=None):
+    def __init__(self, labelCol=None, inputCol=None, predictionCol=None, outputCol=None):
         super(TunedThreshold, self).__init__()
         kwargs = self._input_kwargs
         self.setParams(**kwargs)
@@ -62,8 +65,15 @@ class TunedThreshold(Estimator, HasLabelCol, HasPredictionCol, HasInputCol,
         """
         return self._set(predictionCol=value)
 
+    # Required in Spark >= 3.0
+    def setOutputCol(self, value):
+        """
+        Sets the value of :py:attr:`outputCol`.
+        """
+        return self._set(outputCol=value)
+
     @keyword_only
-    def setParams(self, inputCol=None, labelCol=None, predictionCol=None):
+    def setParams(self, inputCol=None, labelCol=None, predictionCol=None, outputCol=None):
         kwargs = self._input_kwargs
         return self._set(**kwargs)
     
@@ -78,45 +88,45 @@ class TunedThreshold(Estimator, HasLabelCol, HasPredictionCol, HasInputCol,
     @staticmethod
     def compute_turning_threshold(y_truth, y_prob):
         event_rate = sum(y_truth) / len(y_prob) * 100
-        return _compute_turning_threshold(event_rate, y_prob)
+        return TunedThreshold._compute_turning_threshold(event_rate, y_prob)
 
     def _fit(self, dataset):
         col_prob = self.getInputCol()    # the probability column
         col_label = self.getLabelCol()    # true label
-        col_pred = self.getPrecitionCol()    # final prediction
+        col_pred = self.getPredictionCol()    # final prediction
+        col_output = self.getOutputCol()   # output probability column
         
         # see `compute_turning_threshold`
         event_rate = dataset.agg((F.sum(col_label) / F.count(col_label) * F.lit(100)).alias('thresh')).collect()[0]['thresh']
         threshold = TunedThreshold._compute_turning_threshold(event_rate, dataset.select(col_label).toPandas())
-        return NormalDeviationModel(
-            inputCol=col_prob, tunedThreshold=threshold, predictionCol=col_pred)
+        return TunedThresholdModel(inputCol=col_prob, tunedThreshold=threshold, predictionCol=col_pred, outputCol=col_output)
 
 
-class TunedThresholdModel(Model, HasPredictionCol, HasInputCol, HasTunedThreshold, 
+class TunedThresholdModel(Model, HasPredictionCol, HasInputCol, HasTunedThreshold, HasOutputCol,
                           DefaultParamsReadable, DefaultParamsWritable):
 
     @keyword_only
-    def __init__(self, inputCol=None, predictionCol=None, tunedThreshold=None):
+    def __init__(self, inputCol=None, predictionCol=None, tunedThreshold=None, outputCol=None):
         super(TunedThresholdModel, self).__init__()
         kwargs = self._input_kwargs
         self.setParams(**kwargs)  
 
     @keyword_only
-    def setParams(self, inputCol=None, predictionCol=None, tunedThreshold=None):
+    def setParams(self, inputCol=None, predictionCol=None, tunedThreshold=None, outputCol=None):
         kwargs = self._input_kwargs
         return self._set(**kwargs)           
 
     def _transform(self, dataset):
         udf_last = F.udf(lambda v:float(v[-1]), T.FloatType())
-        col_prob = self.getInputCol()
-        col_pred = self.getPredictionCol()
+        col_prob = self.getInputCol()    # the probability column
+        col_pred = self.getPredictionCol()    # final prediction
+        col_output = self.getOutputCol()   # output probability column
         threshold = self.getTunedThreshold()
-        col_temp = f"_flat_{col_pred}"
         return (dataset
             .drop(col_pred)
-            .withColumn(col_temp, udf_last(F.col(col_pred)))
-            .withColumn(col_pred, F.when(F.col(col_temp) >= F.lit(_threshold), F.lit(1))
+            .withColumn(col_output, udf_last(F.col(col_prob)))
+            .withColumn(col_pred, F.when(F.col(col_output) >= F.lit(threshold), F.lit(1))
                                   .otherwise(F.lit(0)))
-            .drop(col_temp)
         )
 
+# Sourced from examples - https://stackoverflow.com/a/37279526

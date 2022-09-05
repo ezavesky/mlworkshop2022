@@ -400,7 +400,7 @@ col_label = 'is_top'
 list_features = ['passenger_count', 'trip_distance', 'total_amount', 'dropoff_zone', 'ride_duration', 'pickup_hour', 'dropoff_hour', 'dropoff_daypart', 'day_of_week', 'weekpart', 'month_of_year', 'week_of_year', 'pickup_zone', 'pickup_daypart']
 
 # comprehensive check for impact by data size
-for sample_ratio in [0.05]: #, 0.5, 0.8]:
+for sample_ratio in [0.05, 0.5, 0.8]:
     df_train = (
         df_labeled.filter(F.col('dataset')==F.lit('train'))
         .select(list_features+[col_label])
@@ -408,7 +408,7 @@ for sample_ratio in [0.05]: #, 0.5, 0.8]:
     )
     df_test = df_labeled.filter(F.col('dataset')==F.lit('test'))
 
-    # pipeline, best_hyperparam = modeling_gridsearch(df_train, col_label)
+    pipeline, best_hyperparam = modeling_gridsearch(df_train, col_label, num_folds=1)
     best_hyperparam['training_fraction'] = sample_ratio
     run_name, df_pred = modeling_train(df_train, df_test, col_label, "taxi_popular", 
                                        pipeline, best_hyperparam, list_inputs=list_features)
@@ -416,12 +416,23 @@ for sample_ratio in [0.05]: #, 0.5, 0.8]:
 
 # COMMAND ----------
 
-list_feature_keep = ['pickup_zone', 'pickup_daypart', 'is_top']
-df_predict = model_predict(df_test.limit(10), "taxi_popular", list_feature_keep)
+list_feature_keep = ['pickup_zone', 'pickup_daypart', 'is_top', 'is_top_predict']
+df_predict = model_predict(df_test.limit(10), "taxi_popular").select(list_feature_keep)
 display(df_predict)
 
 
 # dbfs:/user/ez2685/experiments/MLWS22-ez2685/8927f9b932c043edb5d1442be37a8621/artifacts/taxi_popular
+
+# COMMAND ----------
+
+# predict + compare to prior model
+# measure gains for different demographics
+# plot gains / losses for each demographic (choose top N?)
+# (repeat) add features, measure + plot gains
+# (repeat) add pre-filtering by sampling, measure + plot gains
+# (repeat) add post-filtering by bias, measure + plot gains
+# (repeat) add pre-processing for feature adjustment by bias, measure + plot gains
+# 
 
 # COMMAND ----------
 

@@ -52,7 +52,7 @@ def modeling_gridsearch(df_train, col_label, num_folds=3, parallelism=1):
     def _get_classifier_rf(max_bins=1000, params={}):
         # in case there is some overflow of categorical
         rf = RandomForestClassifier(featuresCol='features', labelCol=col_label, 
-                                            predictionCol=f"{col_label}_predict", probabilityCol=f"{col_label}_prob",
+                                            predictionCol=f"{col_label}_predict", probabilityCol=f"{col_label}_prob_vect",
                                             rawPredictionCol=f"{col_label}_prob_raw", maxBins=max_bins, **params)
         return rf
 
@@ -61,9 +61,9 @@ def modeling_gridsearch(df_train, col_label, num_folds=3, parallelism=1):
                                         stringOrderType="frequencyDesc", handleInvalid ='keep')
         vec_assemble = VectorAssembler(inputCols=list_category_int+list_numeric, outputCol="features")
         if cf is None:
-            cf = _get_classifier_rf()
-        norm_thresh = TunedThreshold(inputCol=f"{col_label}_prob", predictionCol=f"{col_label}_predict", 
-                                     labelCol=col_label)
+            cf = _get_classifier_rf()  
+        norm_thresh = TunedThreshold(inputCol=f"{col_label}_prob_vect", predictionCol=f"{col_label}_predict", 
+                                     outputCol=f"{col_label}_probability", labelCol=col_label)
         pipeline_full = Pipeline(stages=[category_index, vec_assemble, cf, norm_thresh])
         return pipeline_full
 
@@ -142,18 +142,6 @@ def modeling_gridsearch(df_train, col_label, num_folds=3, parallelism=1):
 
 # COMMAND ----------
 
-
-# remap predict function (NOTE: special recommendation from mlflow - 
-#   https://github.com/mlflow/mlflow/issues/694#issuecomment-515604470 and https://github.com/mlflow/mlflow/issues/5337)
-def modeling_predict_threshold(df_feat, _clf, _threshold, _col_label):
-    df_result = (clf.transform(df_feat)
-        .withColumn('probability', udf_last(F.col(f"{_col_label}_prob")))
-        .withColumn('predict', F.when(F.col('probability') >= F.lit(_threshold), class_pos).otherwise(0))
-    )
-    return df_result   # -1=score
-
-
-
 def modeling_train(df_train, df_test, col_label, model_name, pipeline, dict_param_extra,
                    list_inputs=None, name_experiment=CREDENTIALS['constants']['EXPERIMENT_NAME']):
     import datetime as dt
@@ -174,47 +162,20 @@ def modeling_train(df_train, df_test, col_label, model_name, pipeline, dict_para
         # immediately run training and eval against test set
         clf = pipeline.fit(df_train)
         df_train_result = clf.transform(df_train)
-        pdf_train = (df_train_result
-            .select(col_label, F.col(f"{col_label}_predict").cast('int').alias('predict'), 
-                    udf_last(F.col(f"{col_label}_prob")).alias('probability'))
-            .toPandas()
-        )
-        list_outputs = ["predict", "probability"]
-        # display(df_train_result.limit(100))
-        y_train = pdf_train[col_label]
-        train_score = pdf_train['probability']        
+        list_outputs = [f"{col_label}_predict", f"{col_label}_probability"]
+        pdf_train = df_train_result.select(col_label, *list_outputs).toPandas()
 
         # you don't have to, but we've found that the natural calibration for 
         #   a threshold doesn't always end up at 0.5; so this helper detects that
         #   threshold on the training data and uses that to recompute the final prediction
-        score_thresh = compute_prediction_threshold(y_train, train_score)
         class_pos = 1
+        # re-run on testing data
+        df_pred = clf.transform(df_test)
+        pdf_pred = df_pred.select(col_label, *list_outputs).toPandas()
 
-        if False:
-            # remap predict function (NOTE: special recommendation from mlflow - 
-            #   https://github.com/mlflow/mlflow/issues/694#issuecomment-515604470 and https://github.com/mlflow/mlflow/issues/5337)
-            def predict_onedim(df_feat, _clf, _threshold):
-                df_result = (clf.transform(df_feat)
-                    .withColumn('probability', udf_last(F.col(f"{col_label}_prob")))
-                    .withColumn('predict', F.when(F.col('probability') >= F.lit(_threshold), class_pos).otherwise(0))
-                )
-                return df_result   # -1=score
-            clf.predict = partial(predict_onedim, _clf=clf, _threshold=score_thresh)
-            # locally run the predict function
-            df_pred = clf.predict(df_test)
-            pdf_pred = df_pred.select(col_label, 'predict', 'probability').toPandas()
-        else:
-            # re-run on testing data
-            df_pred = clf.transform(df_test)
-            pdf_pred = (df_pred
-                .select(col_label, F.col(f"{col_label}_predict").cast('int').alias('predict'), 
-                        udf_last(F.col(f"{col_label}_prob")).alias('probability'))
-                .toPandas()
-            )
-            
         y_test = pdf_pred[col_label]
-        test_pred = pdf_pred['predict']
-        test_score = pdf_pred['probability']
+        test_pred = pdf_pred[f"{col_label}_predict"]
+        test_score = pdf_pred[f"{col_label}_probability"]
         
         ## STEP 2: display some performance figures, like a confusion matrix and precision/recall curves
         # test_pred = clf.predict_proba(X_test)[:,1] > score_thresh
@@ -254,7 +215,6 @@ def modeling_train(df_train, df_test, col_label, model_name, pipeline, dict_para
 
         # parameters that change the experiment/
         mlflow.log_param("model_name", model_name)
-        mlflow.log_param("score_thresh", score_thresh)
         n_pos = df_train.filter(F.col(col_label) > F.lit(0)).count()
         n_neg = df_train.filter(F.col(col_label) < F.lit(1)).count()
         mlflow.log_param("samples_pos", n_pos)
@@ -343,7 +303,7 @@ def model_predict(df_input, name_model, list_col_keep=None, model_meta=None):
     
     # Load model as a Spark UDF. Override result_type if the model does not return double values.
     model = mlflow.spark.load_model(logged_model)
-    df_predict = model.predict(df_input)
+    df_predict = model.transform(df_input)
     df_predict = df_predict.withColumn('model_id', F.lit(model_meta['run_id']))
     list_final = df_predict.dtypes
     
@@ -360,116 +320,6 @@ def model_predict(df_input, name_model, list_col_keep=None, model_meta=None):
 
 # _, model_meta = model_lookup("taxi_popular")
 # print(model_meta)
-
-# COMMAND ----------
-
-from pyspark.ml.util import DefaultParamsReadable, DefaultParamsWritable
-from pyspark import keyword_only
-import numpy as np
-
-class HasTunedThreshold(Params):
-    tunedThreshold = Param(Params._dummy(),
-            "tunedThreshold", "tunedThreshold",
-            typeConverter=TypeConverters.toFloat)
-
-    def __init__(self):
-        super(HasTunedThreshold, self).__init__()
-
-    def setTunedThreshold(self, value):
-        return self._set(tunedThreshold=value)
-
-    def getTunedThreshold(self):
-        return self.getOrDefault(self.tunedThreshold)
-    
-    
-class TunedThreshold(Estimator, HasLabelCol, HasPredictionCol, HasInputCol,
-                      DefaultParamsReadable, DefaultParamsWritable):
-
-    @keyword_only
-    def __init__(self, labelCol=None, inputCol=None, predictionCol=None):
-        super(TunedThreshold, self).__init__()
-        kwargs = self._input_kwargs
-        self.setParams(**kwargs)
-
-    # Required in Spark >= 3.0
-    def setLabelCol(self, value):
-        """
-        Sets the value of :py:attr:`labelCol`.
-        """
-        return self._set(labelCol=value)
-
-    # Required in Spark >= 3.0
-    def setInputCol(self, value):
-        """
-        Sets the value of :py:attr:`inputCol`.
-        """
-        return self._set(inputCol=value)
-
-    # Required in Spark >= 3.0
-    def setPredictionCol(self, value):
-        """
-        Sets the value of :py:attr:`predictionCol`.
-        """
-        return self._set(predictionCol=value)
-
-    @keyword_only
-    def setParams(self, inputCol=None, labelCol=None, predictionCol=None):
-        kwargs = self._input_kwargs
-        return self._set(**kwargs)
-    
-    # https://stackoverflow.com/a/46077238
-    @staticmethod
-    def _compute_turning_threshold(event_rate, y_prob):
-        threshold = np.percentile(y_prob, 100 - event_rate)
-        # y_pred = [1 if x >= threshold else 0 for x in y_prob[:, 1]]
-        return threshold
-
-    # https://stackoverflow.com/a/46077238
-    @staticmethod
-    def compute_turning_threshold(y_truth, y_prob):
-        event_rate = sum(y_truth) / len(y_prob) * 100
-        return _compute_turning_threshold(event_rate, y_prob)
-
-    def _fit(self, dataset):
-        col_prob = self.getInputCol()    # the probability column
-        col_label = self.getLabelCol()    # true label
-        col_pred = self.getPrecitionCol()    # final prediction
-        
-        # see `compute_turning_threshold`
-        event_rate = dataset.agg((F.sum(col_label) / F.count(col_label) * F.lit(100)).alias('thresh')).collect()[0]['thresh']
-        threshold = TunedThreshold._compute_turning_threshold(event_rate, dataset.select(col_label).toPandas())
-        return NormalDeviationModel(
-            inputCol=col_prob, tunedThreshold=threshold, predictionCol=col_pred)
-
-
-class TunedThresholdModel(Model, HasPredictionCol, HasInputCol, HasTunedThreshold, 
-                          DefaultParamsReadable, DefaultParamsWritable):
-
-    @keyword_only
-    def __init__(self, inputCol=None, predictionCol=None, tunedThreshold=None):
-        super(TunedThresholdModel, self).__init__()
-        kwargs = self._input_kwargs
-        self.setParams(**kwargs)  
-
-    @keyword_only
-    def setParams(self, inputCol=None, predictionCol=None, tunedThreshold=None):
-        kwargs = self._input_kwargs
-        return self._set(**kwargs)           
-
-    def _transform(self, dataset):
-        udf_last = F.udf(lambda v:float(v[-1]), T.FloatType())
-        col_prob = self.getInputCol()
-        col_pred = self.getPredictionCol()
-        threshold = self.getTunedThreshold()
-        col_temp = f"_flat_{col_pred}"
-        return (dataset
-            .drop(col_pred)
-            .withColumn(col_temp, udf_last(F.col(col_pred)))
-            .withColumn(col_pred, F.when(F.col(col_temp) >= F.lit(_threshold), F.lit(1))
-                                  .otherwise(F.lit(0)))
-            .drop(col_temp)
-        )
-
 
 # COMMAND ----------
 
@@ -570,7 +420,7 @@ def model_train_lightgm(X_train, y_train, X_test, y_test, early_stopping_rounds=
 
     train_pred = clf.predict_proba(X_train)[:, 1]
     train_auc = roc_auc_score(y_train, train_pred)
-    score_thresh = compute_prediction_threshold(y_train, train_pred)
+    score_thresh = TunedThreshold.compute_prediction_threshold(y_train, train_pred)
     train_acc = accuracy_score(y_train, train_pred > score_thresh)
     fn_log("Training AUC is %.4f, Accuracy is %.4f"%(train_auc, train_acc))
 
