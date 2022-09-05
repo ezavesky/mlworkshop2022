@@ -20,7 +20,7 @@ import matplotlib.pyplot as plt
 
 # COMMAND ----------
 
-def taxi_plot_timeline(df):
+def taxi_plot_timeline(df, col_value='mean_total', vol_volume='volume', col_value_extra=None):
     # graph example from great plotting how-to site...
     #    https://www.python-graph-gallery.com/line-chart-dual-y-axis-with-matplotlib
     pdf_taxi_stats = (df
@@ -30,11 +30,14 @@ def taxi_plot_timeline(df):
     # https://matplotlib.org/stable/gallery/color/named_colors.html
     COLOR_VOLUME = 'tab:blue'
     COLOR_PRICE = 'tab:orange'
+    COLOR_PRICE_EXTRA = 'tab:olive'
 
-    fig, ax1 = plt.subplots(figsize=(14, 8))
+    fig, ax1 = plt.subplots(figsize=(11, 6))
     ax2 = ax1.twinx()
-    ax1.bar(pdf_taxi_stats['date_trunc'], pdf_taxi_stats['volume'], color=COLOR_VOLUME, width=1.0)
-    ax2.plot(pdf_taxi_stats['date_trunc'], pdf_taxi_stats['mean_total'], color=COLOR_PRICE, lw=4)
+    ax1.bar(pdf_taxi_stats['date_trunc'], pdf_taxi_stats[vol_volume], color=COLOR_VOLUME, width=1.0, label='volume')
+    ax2.plot(pdf_taxi_stats['date_trunc'], pdf_taxi_stats[col_value], color=COLOR_PRICE, lw=2, label='total price')
+    if col_value_extra is not None:
+        ax2.plot(pdf_taxi_stats['date_trunc'], pdf_taxi_stats[col_value_extra], color=COLOR_PRICE_EXTRA, lw=2, label='comparison price')
     # want to see some other weird stats? min/max are crazy (but we'll fix that later)
     # ax2.plot(pdf_taxi_stats['date_trunc'], pdf_taxi_stats['min_total'], color='violet', lw=2)
     # ax2.plot(pdf_taxi_stats['date_trunc'], pdf_taxi_stats['max_total'], color='firebrick', lw=2)
@@ -45,6 +48,7 @@ def taxi_plot_timeline(df):
 
     ax2.set_ylabel("Average Total Fare ($)", color=COLOR_PRICE, fontsize=14)
     ax2.tick_params(axis="y", labelcolor=COLOR_PRICE)
+    ax2.legend()
 
     fig.autofmt_xdate()
     fig.suptitle("NYC Taxi Volume and Average Fares", fontsize=20)
@@ -52,8 +56,8 @@ def taxi_plot_timeline(df):
 
     # compute some overall stats
     fn_log(f"Date Range: {pdf_taxi_stats['date_trunc'].min()} - {pdf_taxi_stats['date_trunc'].max()} (total days {len(pdf_taxi_stats)})")
-    fn_log(f"Total Rides: {pdf_taxi_stats['volume'].sum()}")
-    fn_log(f"Avg Fare: {pdf_taxi_stats['mean_total'].mean()}")
+    fn_log(f"Total Rides: {pdf_taxi_stats[vol_volume].sum()}")
+    fn_log(f"Avg Fare: {pdf_taxi_stats[col_value].mean()}")
 
 
 # COMMAND ----------

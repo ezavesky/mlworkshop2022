@@ -160,15 +160,20 @@ CREDENTIALS['paths'].update({
     'nyctaxi_h3_zones': f"{CREDENTIALS['paths']['databricks_dataset']}/experiment/nyctaxi_h3_zones",   # zone stat data
     'demographics_factors': f"{CREDENTIALS['paths']['databricks_dataset']}/experiment/demographics_factors",   # groups by various factors
     'nyctaxi_geo_sampled': f"{CREDENTIALS['paths']['databricks_dataset']}/experiment/nyctaxi_geo_sampled",  # geo+features write
+    'nyctaxi_geo_labeled': f"{CREDENTIALS['paths']['databricks_dataset']}/experiment/nyctaxi_geo_labeled",  # geo+features+label write
+    'nyctaxi_stats_label': f"{CREDENTIALS['paths']['databricks_dataset']}/experiment/nyctaxi_stats_label",  # check of label stats
 })
 
 # need to have time constants restructed?
 dt_now_month = dt.datetime(year=dt.datetime.now().year, month=dt.datetime.now().month, day=1)
 CREDENTIALS['constants'].update({
-    'MLFLOW_EXPERIMENT': "MLWorkshop2022",
+    'EXPERIMENT_NAME': f"MLWS22-{CREDENTIALS['credentials']['ATTID']}",
     'EXPERIENCED_MODE': False,   # change this flag to run some processing in 'experienced' mode
     'WORKSHOP_ADMIN_MODE': CREDENTIALS['credentials']['ATTID'] in ['ez2685'],
     'DATA_SUBSAMPLE_RATIO': 0.03,   # from our raw data, grab only 3% for quicker demos in this workshop!
+    'DATA_TRAIN_RATIO': 0.6,   # for experiments, what's our training ratio?
+    'DATA_VALIDATION_RATIO': 0.2,   # for experiments, what's our validation ratio? (of test data, how much reserved to validate?)
+    'DATA_QUARTILE_VALID': 3,   # for experiments, what is max quartile when converting to true label 
 
     # our spatial mapping uses h3 cells (resolution 11?) - 
     # see https://towardsdatascience.com/uber-h3-for-data-analysis-with-python-1e54acdcc908
