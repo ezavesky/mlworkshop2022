@@ -17,6 +17,7 @@
 import pyspark.sql.functions as F
 import pandas as pd
 import matplotlib.pyplot as plt
+from pyspark.sql.window import Window
 
 # COMMAND ----------
 
@@ -73,4 +74,111 @@ def taxi_filter_raw(df_input):
         .filter(F.col('fare_amount') >= F.lit(0.0))  # no negative-dollar fares
         .filter(F.col('fare_amount') <= F.lit(20000.0))  # no super-expensive fares
     )
+
+
+# COMMAND ----------
+
+def tax_postproc_volumes(df_predict):
+    # also write predicted, aggregated stats by the zone
+    return (df_predict
+        # do aggregate, but make temp copy for those in top category
+        .withColumn('_pred_volume', F.when(F.col('is_top_predict')==F.lit(1), F.col('volume'))
+                                   .otherwise(F.lit(0)))
+        .withColumn('_pred_total', F.when(F.col('is_top_predict')==F.lit(1), F.col('total_amount'))
+                                   .otherwise(F.lit(0)))
+        .withColumn('_top_volume', F.when(F.col('is_top')==F.lit(1), F.col('volume'))
+                                   .otherwise(F.lit(0)))
+        .withColumn('_top_total', F.when(F.col('is_top')==F.lit(1), F.col('total_amount'))
+                                   .otherwise(F.lit(0)))
+        .groupBy('pickup_zone').agg(
+            F.mean(F.col('total_amount')).alias('mean_total'),
+            F.mean(F.col('_pred_total')).alias('mean'),
+            F.sum(F.col('total_amount')).alias('sum_total'),
+            F.sum(F.col('_pred_total')).alias('sum'),
+            F.sum(F.col('volume')).alias('volume_total'),
+            F.sum(F.col('_pred_volume')).alias('volume'),
+        )
+    )
+
+# COMMAND ----------
+
+def taxi_zone_demos(factor_limit=None, path_demos=None, compute_quantile=False):
+    """Create a set of features from demographic factors that have been grouped by zone.
+         Provide a specific factor for a specific set of features or None for all.
+    """
+    if path_demos is None:
+        path_demos = CREDENTIALS['paths']['demographics_factors']
+    df_demo_pivot_feat = (spark.read.format('delta').load(path_demos)
+        .filter(F.col('factor').isNotNull())
+    )
+    if factor_limit is not None:
+        df_demo_pivot_feat = df_demo_pivot_feat.filter(F.col('factor')==F.lit(factor_limit))
+
+    # resume with feature pivot
+    winFactor = Window.partitionBy('zone', 'factor')
+    df_demo_pivot_feat = (df_demo_pivot_feat
+        .withColumn("cnt_mean", F.mean(F.col('count')).over(winFactor))
+        .withColumn("cnt_std", F.stddev(F.col('count')).over(winFactor))
+        .withColumn("cnt_zscore", (F.col('count') - F.col('cnt_mean'))/F.col('cnt_std'))
+        # use statistics to find quartiles in raw data
+        # convert Z-score to quantile - https://mathbitsnotebook.com/Algebra2/Statistics/STstandardNormalDistribution.html
+        .withColumn("cnt_quantile", F.when(F.col('cnt_zscore') >= (F.col('cnt_zscore') * F.lit(0.67448)), F.lit(1))
+                                    .when(F.col('cnt_zscore') >= (F.col('cnt_zscore') * F.lit(0.0)), F.lit(2))
+                                    .when(F.col('cnt_zscore') >= (F.col('cnt_zscore') * F.lit(-0.67448)), F.lit(3))
+                                    .otherwise(F.lit(4)) )
+        .withColumn('factor_val', F.regexp_replace(F.concat(F.col('factor'), F.lit('_'), 
+                                    F.regexp_replace(F.col('value'), r"[^0-9a-zA-Z]+", "_")), r"[_]+", "_"))
+    )
+    # # partition to keep only samples in the quantile?
+    # if quantile_min is not None:
+    #     df_demo_pivot_feat = df_demo_pivot_feat.filter(F.col(cnt_quantile) <= F.lit(quantile_min))
+    # if quantile_max is not None:
+    #     df_demo_pivot_feat = df_demo_pivot_feat.filter(F.col(cnt_quantile) > F.lit(quantile_max))
+    
+    # finally, consolidate into pivot rable
+    if compute_quantile:
+        df_demo_pivot_feat = (df_demo_pivot_feat    
+            .groupBy('zone').pivot('factor_val').agg(
+                F.first('cnt_quantile').alias('cnt_quantile'),
+            )
+        )
+    else:
+        df_demo_pivot_feat = (df_demo_pivot_feat    
+            .groupBy('zone').pivot('factor_val').agg(
+                F.mean('cnt_zscore').alias('cnt_zscore'),
+                #F.mean('count').alias('count'),
+            )
+        )
+    return df_demo_pivot_feat.drop('null')
+
+
+
+# COMMAND ----------
+
+def taxi_zone_demo_disparities(factor_limit, path_demos=None, quantile_size=10):
+    """Across zones and a demographics factor, allow the sub-classes of a factor to pick their
+        zones of highest disparity.  Effectively, this should highlight zones with the biggest disparities
+        across all zones so that we can identify a "protected" class.
+    """
+    winFactor = Window.partitionBy('zone')
+    winDisparity = Window.partitionBy('factor').orderBy(F.col('cnt_zscore').desc())
+    winZone = Window.partitionBy('zone').orderBy(F.col('cnt_zscore').desc())
+
+    if path_demos is None:
+        path_demos = CREDENTIALS['paths']['demographics_factors']
+    df_disparity = (spark.read.format('delta').load(path_demos)
+        .filter(F.col('factor').isNotNull())
+        .filter(F.col('factor')==F.lit(factor_limit))
+        .withColumn("cnt_mean", F.mean(F.col('count')).over(winFactor))
+        .withColumn("cnt_std", F.stddev(F.col('count')).over(winFactor))
+        .withColumn("cnt_zscore", (F.col('count') - F.col('cnt_mean'))/F.col('cnt_std'))
+        .withColumn("cnt_quantile", F.ntile(quantile_size).over(winZone))
+        # convert Z-score to quantile - https://mathbitsnotebook.com/Algebra2/Statistics/STstandardNormalDistribution.html
+        # .withColumn("cnt_quantile", F.when(F.col('cnt_zscore') >= (F.col('cnt_zscore') * F.lit(0.67448)), F.lit(1))
+        #                             .when(F.col('cnt_zscore') >= (F.col('cnt_zscore') * F.lit(0.0)), F.lit(2))
+        #                             .when(F.col('cnt_zscore') >= (F.col('cnt_zscore') * F.lit(-0.67448)), F.lit(3))
+        #                             .otherwise(F.lit(4)) )
+        .withColumn("overall_quantile", F.ntile(quantile_size).over(winDisparity))
+    )
+    return df_disparity
 

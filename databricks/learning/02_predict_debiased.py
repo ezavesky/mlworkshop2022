@@ -437,10 +437,10 @@ taxi_plot_timeline(pdf_stat_label, col_value='mean_total', vol_volume='volume', 
 # COMMAND ----------
 
 # MAGIC %md
-# MAGIC ## n2.e7 MlFlow for Model Tracking
+# MAGIC ## n2.e7 mlflow for Model Tracking
 # MAGIC Let's take a quick moment to explore a common issue in ML model development: tracking your models!
 # MAGIC 
-# MAGIC Luckily, Databricks includes native hooks to [mlflow](https://mlflow.org/) and we use it heavily in the
+# MAGIC Fortunately, Databricks includes native hooks to [mlflow](https://mlflow.org/) and we use it heavily in the
 # MAGIC model learning functions above.  
 # MAGIC 
 # MAGIC In our trained model, we'll create a simple [RandomForest classifier](https://spark.apache.org/docs/latest/api/python/reference/api/pyspark.ml.classification.RandomForestClassifier.html#pyspark.ml.classification.RandomForestClassifier) using Pyspark's DataFrame-based [Mllib](https://spark.apache.org/docs/latest/api/python/reference/pyspark.ml.html).
@@ -475,25 +475,7 @@ df_predict = model_predict(df_test, "taxi_popular")
 path_read = CREDENTIALS['paths']['nyctaxi_h3_learn_base']
 if CREDENTIALS['constants']['EXPERIENCED_MODE'] and CREDENTIALS['constants']['WORKSHOP_ADMIN_MODE']:
     # also write predicted, aggregated stats by the zone
-    df_zone_predict = (df_predict
-        # do aggregate, but make temp copy for those in top category
-        .withColumn('_pred_volume', F.when(F.col('is_top_predict')==F.lit(1), F.col('volume'))
-                                   .otherwise(F.lit(0)))
-        .withColumn('_pred_total', F.when(F.col('is_top_predict')==F.lit(1), F.col('total_amount'))
-                                   .otherwise(F.lit(0)))
-        .withColumn('_top_volume', F.when(F.col('is_top')==F.lit(1), F.col('volume'))
-                                   .otherwise(F.lit(0)))
-        .withColumn('_top_total', F.when(F.col('is_top')==F.lit(1), F.col('total_amount'))
-                                   .otherwise(F.lit(0)))
-        .groupBy('pickup_zone').agg(
-            F.mean(F.col('total_amount')).alias('mean_total'),
-            F.mean(F.col('_pred_total')).alias('mean'),
-            F.sum(F.col('total_amount')).alias('sum_total'),
-            F.sum(F.col('_pred_total')).alias('sum'),
-            F.sum(F.col('volume')).alias('volume_total'),
-            F.sum(F.col('_pred_volume')).alias('volume'),
-        )
-    )
+    df_zone_predict = tax_postproc_volumes(df_predict)
     # clobber historical file, rewrite
     dbutils.fs.rm(path_read, True)
     df_zone_predict.write.format('delta').save(path_read)
@@ -502,11 +484,71 @@ df_zone_predict = spark.read.format('delta').load(path_read)
 
 # COMMAND ----------
 
+# MAGIC %md
+# MAGIC ## Auxiliary Feature Creation
+
+# COMMAND ----------
+
+# df_disparity = taxi_zone_demo_disparities('hshld_incme_grp', quantile_size=10)
+df_disparity = taxi_zone_demo_disparities('ethnc_grp', quantile_size=10)
+df_grouped = (df_disparity
+    .filter(F.col('overall_quantile')==F.lit(1))
+    .groupBy('value').agg(
+        F.count('value').alias('count'),
+        # F.countDistinct('zone').alias('distinct'),
+    )
+    .orderBy(F.col('count').desc())
+)
+fn_log(f"Disparities Detected: {df_grouped.toPandas().to_dict()}")
+
+# df_grouped.toPandas().plot.bar('value', 'count', grid=True)
+# display(df_grouped)
+# fn_log(f"Total Zones: {df_disparity.select(F.countDistinct('zone').alias('count')).collect()}")
+
+
+
+
+
+
 # plot gains / losses for each demographic (choose top N?)
 # (repeat) add pre-filtering by sampling, measure + plot gains
 # (repeat) add post-filtering by bias, measure + plot gains
 # (repeat) add pre-processing for feature adjustment by bias, measure + plot gains
 # 
+
+# COMMAND ----------
+
+
+pdf_disparity = (df_disparity
+    .groupBy('zone').agg(
+        F.min(F.col('overall_quantile')).alias('quantile'),
+        F.max(F.when(F.col('overall_quantile')==F.lit(1), F.col('cnt_zscore')).otherwise(F.lit(0))).alias('disparity'),
+    )
+    .join(spark.read.format('delta').load(CREDENTIALS['paths']['nyctaxi_h3_zones']), ['zone'])
+    .toPandas()
+)
+display(pdf_disparity)
+pdf_disparity['geometry'] = pdf_disparity['geometry'].apply(lambda x: wkt.loads(x))
+num_total = len(pdf_disparity)
+num_active = len(pdf_disparity[pdf_disparity['quantile']==1])
+
+# load geometry for NEW YORK state; convert to geometry presentation format
+pdf_shape_states = (spark.read.format('delta').load(CREDENTIALS['paths']['geometry_state'])
+    .filter(F.col('stusps')==F.lit('NY'))
+    .toPandas()
+)
+pdf_shape_states['geometry'] = pdf_shape_states['geometry'].apply(lambda x: wkt.loads(x))
+
+# num_total = len(pdf_sub['count'])
+shape_plot_map(pdf_disparity, col_viz='disparity', 
+               txt_title=f"Top Ethnicity Disparity Zones (z-score) by Demographic ({num_active}/{num_total} total zones)", 
+               gdf_background=pdf_shape_states, zscore=False)
+
+
+# COMMAND ----------
+
+
+
 
 # COMMAND ----------
 

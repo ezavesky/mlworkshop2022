@@ -159,6 +159,7 @@ CREDENTIALS['paths'].update({
     'nyctaxi_h3_zips': f"{CREDENTIALS['paths']['databricks_dataset']}/experiment/nyctaxi_h3_zips",   # zip stat data
     'nyctaxi_h3_zones': f"{CREDENTIALS['paths']['databricks_dataset']}/experiment/nyctaxi_h3_zones",   # zone stat data
     'demographics_factors': f"{CREDENTIALS['paths']['databricks_dataset']}/experiment/demographics_factors",   # groups by various factors
+    'demographics_disparity_base': f"{CREDENTIALS['paths']['databricks_dataset']}/experiment/demographics_disparity_base",   # disparity from demos
     'nyctaxi_geo_sampled': f"{CREDENTIALS['paths']['databricks_dataset']}/experiment/nyctaxi_geo_sampled",  # geo+features write
     'nyctaxi_geo_labeled': f"{CREDENTIALS['paths']['databricks_dataset']}/experiment/nyctaxi_geo_labeled",  # geo+features+label write
     'nyctaxi_stats_label': f"{CREDENTIALS['paths']['databricks_dataset']}/experiment/nyctaxi_stats_label",  # check of label stats

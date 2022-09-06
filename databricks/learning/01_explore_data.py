@@ -512,6 +512,89 @@ shape_plot_map_factors(pdf_sub, col_factor='value', col_viz='count_log10', use_l
 # COMMAND ----------
 
 # MAGIC %md
+# MAGIC ### Consolidated Disparity Maps
+# MAGIC In this final cell, we'll combine the disaprities that we detect across different demographics into 
+# MAGIC single maps.  In doing so, we're filtering to find the top decile (e.g. top 10%) of zones with population diparities.  It's interesting to see that without additional guidance, the majority classes still contribute to a lot of the identified disparity zones --- but let's save that for next time.
+
+# COMMAND ----------
+
+path_read = CREDENTIALS['paths']['demographics_disparity_base']
+
+if CREDENTIALS['constants']['EXPERIENCED_MODE'] and CREDENTIALS['constants']['WORKSHOP_ADMIN_MODE']:
+    # df_disparity = taxi_zone_demo_disparities('hshld_incme_grp', quantile_size=10)
+    df_disparity = taxi_zone_demo_disparities('ethnc_grp', quantile_size=10)
+    df_grouped = (df_disparity
+        .filter(F.col('overall_quantile')==F.lit(1))
+        .groupBy('value').agg(
+            F.count('value').alias('count'),
+            # F.countDistinct('zone').alias('distinct'),
+        )
+        .orderBy(F.col('count').desc())
+    )
+    fn_log(f"Disparities Detected: {df_grouped.toPandas().to_dict(orient='records')}")
+
+    df_disparity2 = taxi_zone_demo_disparities('hshld_incme_grp', quantile_size=10)
+    df_grouped = (df_disparity2
+        .filter(F.col('overall_quantile')==F.lit(1))
+        .groupBy('value').agg(
+            F.count('value').alias('count'),
+            # F.countDistinct('zone').alias('distinct'),
+        )
+        .orderBy(F.col('count').desc())
+    )
+    fn_log(f"Disparities Detected: {df_grouped.toPandas().to_dict(orient='records')}")
+    df_disparity = df_disparity.union(df_disparity2)  # combine so we can write
+
+    try:
+        dbutils.fs.rm(path_read, True)
+    except Exception as e:
+        pass
+    df_disparity.write.format('delta').save(path_read)
+    
+df_disparity = spark.read.format('delta').load(path_read)
+
+# first, plot ethnicity disparity
+pdf_disparity = (df_disparity
+    .filter(F.col('factor')==F.lit('ethnc_grp'))
+    .groupBy('zone').agg(
+        F.min(F.col('overall_quantile')).alias('quantile'),
+        F.max(F.when(F.col('overall_quantile')==F.lit(1), F.col('cnt_zscore')).otherwise(F.lit(0))).alias('disparity'),
+    )
+    .join(df_zones, ['zone'])
+    .toPandas()
+)
+pdf_disparity['geometry'] = pdf_disparity['geometry'].apply(lambda x: wkt.loads(x))
+num_total = len(pdf_disparity)
+num_active = len(pdf_disparity[pdf_disparity['quantile']==1])
+
+# num_total = len(pdf_sub['count'])
+shape_plot_map(pdf_disparity, col_viz='disparity', 
+               txt_title=f"Top Ethnicity Disparity Zones (z-score) by Demographic ({num_active}/{num_total} total zones)", 
+               gdf_background=pdf_shape_states, zscore=False)
+
+# second, plot HHincome disparity
+pdf_disparity = (df_disparity
+    .filter(F.col('factor')==F.lit('hshld_incme_grp'))
+    .groupBy('zone').agg(
+        F.min(F.col('overall_quantile')).alias('quantile'),
+        F.max(F.when(F.col('overall_quantile')==F.lit(1), F.col('cnt_zscore')).otherwise(F.lit(0))).alias('disparity'),
+    )
+    .join(df_zones, ['zone'])
+    .toPandas()
+)
+pdf_disparity['geometry'] = pdf_disparity['geometry'].apply(lambda x: wkt.loads(x))
+num_total = len(pdf_disparity)
+num_active = len(pdf_disparity[pdf_disparity['quantile']==1])
+
+# num_total = len(pdf_sub['count'])
+shape_plot_map(pdf_disparity, col_viz='disparity', 
+               txt_title=f"Top Income Disparity Zones (z-score) by Demographic ({num_active}/{num_total} total zones)", 
+               gdf_background=pdf_shape_states, zscore=False)
+
+
+# COMMAND ----------
+
+# MAGIC %md
 # MAGIC # Wrap-up
 # MAGIC That's it for this section of exploring data, what did we learn?
 # MAGIC 

@@ -45,15 +45,15 @@ model_sel_last = None
 dbutils.widgets.dropdown("model", list_model_map[0][0], [x[0] for x in list_model_map])
 
 # load specific demographic features
-path_read = CREDENTIALS['paths']['demographics_factors']
-
 dict_map = [[0, 'ethnc_grp', 'Ethnicity'], [1, 'hshld_incme_grp', "HH Income"], [2, 'gnrt', "Age"], 
             [3, 'marital_status_cif', "Marital Status"], [4, 'edctn', 'Education'], 
             [5, 'ethnic_sub_grp', 'Ethnic Sub Group'], [6, 'gndr', 'Gender']]
 df_mapping = spark.createDataFrame(pd.DataFrame(dict_map, columns=['priority', 'factor', 'factor_name']))
 
 fn_log("Loading factorized demographics by zone...")
-df_demos_pivot_all = spark.read.format('delta').load(path_read).join(df_mapping, ['factor'])
+df_demos_pivot_all = (spark.read.format('delta').load(CREDENTIALS['paths']['demographics_factors'])
+    .join(df_mapping, ['factor'])
+)
 list_factors = df_demos_pivot_all.select('factor').distinct().toPandas()
 
 # load geometry for nyc taxi zones

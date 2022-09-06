@@ -23,7 +23,8 @@ import pyspark.sql.functions as F
 import pandas as pd
 import matplotlib.pyplot as plt
 import math
-
+import numpy as np
+import scipy.stats as st   # zscore norm
 
 # COMMAND ----------
 
@@ -77,7 +78,7 @@ def shape_plot_example(gdf_example=None, res_compare=[7, 9, 11], col_viz=None):
 # COMMAND ----------
 
 # helper to demonstrate simple plot of a single map...
-def shape_plot_map(gdf_data, col_viz=None, txt_title='original plot', gdf_background=None):
+def shape_plot_map(gdf_data, col_viz=None, txt_title='original plot', gdf_background=None, zscore=False):
     from h3ronpy import vector, util
 
     # original source - https://towardsdatascience.com/uber-h3-for-data-analysis-with-python-1e54acdcc908
@@ -88,7 +89,11 @@ def shape_plot_map(gdf_data, col_viz=None, txt_title='original plot', gdf_backgr
         gdf_background = gpd.GeoDataFrame(gdf_background)
         gdf_background.plot(ax=axis, color='lightgrey')
 
-    gdf_copy = gpd.GeoDataFrame(gdf_data)
+    gdf_copy = gpd.GeoDataFrame(gdf_data.copy())
+    # convert to percentage - https://stackoverflow.com/a/55146424
+    if zscore:
+        gdf_copy[col_viz] = st.norm.cdf(gdf_copy[col_viz]) * 100
+
     if col_viz is not None:
         gdf_copy.plot(ax=axis, column=col_viz, cmap='winter', legend=True)
         txt_title = f"{txt_title}, ({col_viz})"
@@ -127,14 +132,14 @@ def shape_plot_map_factors(gdf_data, col_factor, col_viz, txt_title='original pl
     NOTE: `col_disparity` is never post-processed in this function, it's assumed to be in the same unit
           as `col_viz` so some precompute may be necessary.
     """
-    import numpy as np
     from h3ronpy import vector, util
     import matplotlib.colors
     import matplotlib.cm
-
+    
     # provided a background shape too? - https://towardsdatascience.com/plotting-maps-with-geopandas-428c97295a73
     if gdf_background is not None:
         gdf_background = gpd.GeoDataFrame(gdf_background)
+    zscore = False
 
     # collect highest sum'd along a factor
     gdf_copy = gpd.GeoDataFrame(gdf_data).fillna(0)
@@ -172,17 +177,21 @@ def shape_plot_map_factors(gdf_data, col_factor, col_viz, txt_title='original pl
         # Z-score normalize ((X - mean) / std-dev)
         # gdf_copy[col_viz] = (gdf_copy[col_viz] - gdf_copy[col_mean]) / gdf_copy[col_std]  # Z-score norm
         # percentage normalize ((X - mean) / mean)
-        gdf_copy[col_viz] = (gdf_copy[col_viz] - gdf_copy[col_mean]) / gdf_copy[col_mean]  # percent-difference
+        gdf_copy[col_viz] = (gdf_copy[col_viz] - gdf_copy[col_mean]) / gdf_copy[col_std]  # percent-difference
+        zscore = True
         # end normalization
-
-    xmin = gdf_copy[col_viz].min()
-    xmax = gdf_copy[col_viz].max()
-    fn_log(f"[shape_plot_map] Input columns: {gdf_copy.columns}; factors: {dict_factors}; extents [{xmin}, {xmax}]")
 
     # allow disparity rendering?
     if col_disparity is not None and col_disparity in gdf_copy.columns:
         gdf_copy[col_viz] -= gdf_copy[col_disparity]
+    # convert to percentage - https://stackoverflow.com/a/55146424
+    if zscore:
+        gdf_copy[col_viz] = st.norm.cdf(gdf_copy[col_viz]) * 100
     
+    xmin = gdf_copy[col_viz].min()
+    xmax = gdf_copy[col_viz].max()
+    fn_log(f"[shape_plot_map] Input columns: {gdf_copy.columns}; factors: {dict_factors}; extents [{xmin}, {xmax}]")
+
     # original source - https://towardsdatascience.com/uber-h3-for-data-analysis-with-python-1e54acdcc908
     figure, axis = plt.subplots(2, 2, figsize=(16, 12))
     norm_map = matplotlib.colors.Normalize(xmin, xmax, True)
