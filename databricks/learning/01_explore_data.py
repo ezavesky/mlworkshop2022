@@ -514,82 +514,57 @@ shape_plot_map_factors(pdf_sub, col_factor='value', col_viz='count_log10', use_l
 # MAGIC %md
 # MAGIC ### Consolidated Disparity Maps
 # MAGIC In this final cell, we'll combine the disaprities that we detect across different demographics into 
-# MAGIC single maps.  In doing so, we're filtering to find the top decile (e.g. top 10%) of zones with population diparities.  It's interesting to see that without additional guidance, the majority classes still contribute to a lot of the identified disparity zones --- but let's save that for next time.
+# MAGIC single maps.  In doing so, we're filtering to find the top decile (e.g. top 10%) of zones with population disparities.  
+# MAGIC 
+# MAGIC Reviewing the generated maps, it's interesting to see that without additional guidance, the majority classes still contribute to a lot of the identified disparity zones --- but let's save that for next time.
 
 # COMMAND ----------
 
 path_read = CREDENTIALS['paths']['demographics_disparity_base']
+dict_disparity_demos = {'ethnc_grp':"Ethnicity", 'hshld_incme_grp':"Income"}    # handy data def to loop over
 
 if CREDENTIALS['constants']['EXPERIENCED_MODE'] and CREDENTIALS['constants']['WORKSHOP_ADMIN_MODE']:
-    # df_disparity = taxi_zone_demo_disparities('hshld_incme_grp', quantile_size=10)
-    df_disparity = taxi_zone_demo_disparities('ethnc_grp', quantile_size=10)
-    df_grouped = (df_disparity
-        .filter(F.col('overall_quantile')==F.lit(1))
-        .groupBy('value').agg(
-            F.count('value').alias('count'),
-            # F.countDistinct('zone').alias('distinct'),
+    df_disparity = None
+    for demo_group in dict_disparity_demos:
+        # df_disparity = taxi_zone_demo_disparities('hshld_incme_grp', quantile_size=10)
+        df_disparity_tmp = taxi_zone_demo_disparities(demo_group, quantile_size=10)
+        df_grouped = (df_disparity
+            .filter(F.col('overall_quantile')==F.lit(1))
+            .groupBy('value').agg(
+                F.count('value').alias('count'),
+                # F.countDistinct('zone').alias('distinct'),
+            )
+            .orderBy(F.col('count').desc())
         )
-        .orderBy(F.col('count').desc())
-    )
-    fn_log(f"Disparities Detected: {df_grouped.toPandas().to_dict(orient='records')}")
+        fn_log(f"Disparities Detected [{demo_group}]: {df_grouped.toPandas().to_dict(orient='records')}")
+        if df_disparity is None:    # we're adding a few together...
+            df_disparity = df_disparity_tmp
+        else:
+            df_disparity = df_disparity.union(df_disparity_tmp)  # combine so we can write
 
-    df_disparity2 = taxi_zone_demo_disparities('hshld_incme_grp', quantile_size=10)
-    df_grouped = (df_disparity2
-        .filter(F.col('overall_quantile')==F.lit(1))
-        .groupBy('value').agg(
-            F.count('value').alias('count'),
-            # F.countDistinct('zone').alias('distinct'),
-        )
-        .orderBy(F.col('count').desc())
-    )
-    fn_log(f"Disparities Detected: {df_grouped.toPandas().to_dict(orient='records')}")
-    df_disparity = df_disparity.union(df_disparity2)  # combine so we can write
-
-    try:
-        dbutils.fs.rm(path_read, True)
-    except Exception as e:
-        pass
+    dbutils.fs.rm(path_read, True)
     df_disparity.write.format('delta').save(path_read)
+    # end disparity compute
     
 df_disparity = spark.read.format('delta').load(path_read)
-
-# first, plot ethnicity disparity
-pdf_disparity = (df_disparity
-    .filter(F.col('factor')==F.lit('ethnc_grp'))
-    .groupBy('zone').agg(
-        F.min(F.col('overall_quantile')).alias('quantile'),
-        F.max(F.when(F.col('overall_quantile')==F.lit(1), F.col('cnt_zscore')).otherwise(F.lit(0))).alias('disparity'),
+for demo_group in dict_disparity_demos:
+    pdf_disparity = (df_disparity
+        .filter(F.col('factor')==F.lit(demo_group))   # filter by the specific demographic
+        .groupBy('zone').agg(    # group to set zones we don't care about to zero
+            F.min(F.col('overall_quantile')).alias('quantile'),
+            F.max(F.when(F.col('overall_quantile')==F.lit(1), F.col('cnt_zscore')).otherwise(F.lit(0))).alias('disparity'),
+        )
+        .join(df_zones, ['zone'])  # join against the zone shape to plot
+        .toPandas()
     )
-    .join(df_zones, ['zone'])
-    .toPandas()
-)
-pdf_disparity['geometry'] = pdf_disparity['geometry'].apply(lambda x: wkt.loads(x))
-num_total = len(pdf_disparity)
-num_active = len(pdf_disparity[pdf_disparity['quantile']==1])
+    pdf_disparity['geometry'] = pdf_disparity['geometry'].apply(lambda x: wkt.loads(x))
+    num_total = len(pdf_disparity)
+    num_active = len(pdf_disparity[pdf_disparity['quantile']==1])
 
-# num_total = len(pdf_sub['count'])
-shape_plot_map(pdf_disparity, col_viz='disparity', 
-               txt_title=f"Top Ethnicity Disparity Zones (z-score) by Demographic ({num_active}/{num_total} total zones)", 
-               gdf_background=pdf_shape_states, zscore=False)
+    # plot the new zone + disparity
+    shape_plot_map(pdf_disparity, col_viz='disparity', gdf_background=pdf_shape_states, zscore=False,
+                   txt_title=f"Top {dict_disparity_demos[demo_group]} Disparity Zones (z-score) by Demographic ({num_active}/{num_total} total zones)")
 
-# second, plot HHincome disparity
-pdf_disparity = (df_disparity
-    .filter(F.col('factor')==F.lit('hshld_incme_grp'))
-    .groupBy('zone').agg(
-        F.min(F.col('overall_quantile')).alias('quantile'),
-        F.max(F.when(F.col('overall_quantile')==F.lit(1), F.col('cnt_zscore')).otherwise(F.lit(0))).alias('disparity'),
-    )
-    .join(df_zones, ['zone'])
-    .toPandas()
-)
-pdf_disparity['geometry'] = pdf_disparity['geometry'].apply(lambda x: wkt.loads(x))
-num_total = len(pdf_disparity)
-num_active = len(pdf_disparity[pdf_disparity['quantile']==1])
-
-# num_total = len(pdf_sub['count'])
-shape_plot_map(pdf_disparity, col_viz='disparity', 
-               txt_title=f"Top Income Disparity Zones (z-score) by Demographic ({num_active}/{num_total} total zones)", 
-               gdf_background=pdf_shape_states, zscore=False)
 
 
 # COMMAND ----------
