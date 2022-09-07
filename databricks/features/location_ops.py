@@ -116,7 +116,8 @@ def shape_plot_map(gdf_data, col_viz=None, txt_title='original plot', gdf_backgr
 
 # helper to plot the variants of one population...
 def shape_plot_map_factors(gdf_data, col_factor, col_viz, txt_title='original plot', 
-                           use_log=True, col_norm=None, col_disparity=None, gdf_background=None):
+                           use_log=True, col_norm=None, col_disparity=None, gdf_background=None,
+                           zscore=False):
     """
     Kind of a complicated shape-plotting method.  It takes an input pandas DataFrame, does a grouping
     by the column `col_factor` and plots values in `col_viz`.  Optionally, you can apply a normalization
@@ -139,7 +140,6 @@ def shape_plot_map_factors(gdf_data, col_factor, col_viz, txt_title='original pl
     # provided a background shape too? - https://towardsdatascience.com/plotting-maps-with-geopandas-428c97295a73
     if gdf_background is not None:
         gdf_background = gpd.GeoDataFrame(gdf_background)
-    zscore = False
 
     # collect highest sum'd along a factor
     gdf_copy = gpd.GeoDataFrame(gdf_data).fillna(0)
