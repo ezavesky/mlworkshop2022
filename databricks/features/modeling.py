@@ -452,11 +452,7 @@ def model_preprocess_pipeline(pdf):
         fn_log(f"[model_preprocess_pipeline] Working on {col_work}...")
         pdf_uni = pdf.groupby(col_work).count().reset_index()
         print(pdf_uni)
-    
-    
 #     enc_ord = OrdinalEncoder()
-
-
 
     # https://scikit-learn.org/stable/modules/impute.html#marking-imputed-values
     transformer = FeatureUnion(

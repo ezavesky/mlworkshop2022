@@ -448,9 +448,13 @@ taxi_plot_timeline(pdf_stat_label, col_value='mean_total', vol_volume='volume', 
 # COMMAND ----------
 
 # pull out our test data from the labeled dataset
+path_read = CREDENTIALS['paths']['nyctaxi_geo_labeled']
+df_labeled = spark.read.format('delta').load(path_read)
 df_test = df_labeled.filter(F.col('dataset')==F.lit('test'))
 
 # experienced mode derivation of data (about 15-25m)
+#    this code will actually train a new model based on the input `list_features` using the label `col_label`
+#    this code should be generic enough for you to reuse in your own 
 if CREDENTIALS['constants']['EXPERIENCED_MODE'] and CREDENTIALS['constants']['WORKSHOP_ADMIN_MODE']:
     col_label = 'is_top'
     list_features = ['passenger_count', 'trip_distance', 'total_amount', 'dropoff_zone', 'ride_duration', 'pickup_hour', 'dropoff_hour', 'dropoff_daypart', 'day_of_week', 'weekpart', 'month_of_year', 'week_of_year', 'pickup_zone', 'pickup_daypart']
@@ -464,73 +468,66 @@ if CREDENTIALS['constants']['EXPERIENCED_MODE'] and CREDENTIALS['constants']['WO
             .select(list_features+[col_label])
             .sample(sample_ratio, seed=42)
         )
-
-        pipeline, best_hyperparam = modeling_gridsearch(df_train, col_label, num_folds=1)
+        # the first line searches for best parameters (set num_folds=1 to skip the search)
+        pipeline, best_hyperparam = modeling_gridsearch(df_train, col_label, num_folds=3)
+        # these lines actually train the model
         best_hyperparam['training_fraction'] = sample_ratio
         run_name, df_pred = modeling_train(df_train, df_test, col_label, "taxi_popular", 
                                            pipeline, best_hyperparam, list_inputs=list_features)
 
-# now let's actually load and execute the model on our TEST data
-df_predict = model_predict(df_test, "taxi_popular")
+
+# COMMAND ----------
+
+# let's write our predictions in aggregate for the interactive viewer 
 path_read = CREDENTIALS['paths']['nyctaxi_h3_learn_base']
 if CREDENTIALS['constants']['EXPERIENCED_MODE'] and CREDENTIALS['constants']['WORKSHOP_ADMIN_MODE']:
+    # now let's actually load and execute the model on our TEST data
+    df_predict = model_predict(df_test, "taxi_popular")
     # also write predicted, aggregated stats by the zone
-    df_zone_predict = tax_postproc_volumes(df_predict)
+    df_zone_predict = taxi_postproc_volumes(df_predict)
     # clobber historical file, rewrite
     dbutils.fs.rm(path_read, True)
     df_zone_predict.write.format('delta').save(path_read)
 
 df_zone_predict = spark.read.format('delta').load(path_read)
+display(df_predict)
 
 # COMMAND ----------
 
 # MAGIC %md
-# MAGIC ## Auxiliary Feature Creation
+# MAGIC ### Disparity Check
+# MAGIC While we haven't done anything to combat the disparity (e.g. the difference in rides distribution versus highest population areas across demographics), we can do a sanity-check against the straight population map from notebook one.  
+# MAGIC 
+# MAGIC Not surprisingly, the only "improvements" we see are in Manhattan where the sheer volume of rides seem to have satisfied some of low-income needs --- but all others remain relatively unchanged.  The bad news is *this is indeed bias against ethnic or income minorities*.  The good news is *now we know where to fix things*.
 
 # COMMAND ----------
 
-# df_disparity = taxi_zone_demo_disparities('hshld_incme_grp', quantile_size=10)
-df_disparity = taxi_zone_demo_disparities('ethnc_grp', quantile_size=10)
-df_grouped = (df_disparity
-    .filter(F.col('overall_quantile')==F.lit(1))
-    .groupBy('value').agg(
-        F.count('value').alias('count'),
-        # F.countDistinct('zone').alias('distinct'),
-    )
-    .orderBy(F.col('count').desc())
-)
-fn_log(f"Disparities Detected: {df_grouped.toPandas().to_dict()}")
-
-# df_grouped.toPandas().plot.bar('value', 'count', grid=True)
-# display(df_grouped)
-# fn_log(f"Total Zones: {df_disparity.select(F.countDistinct('zone').alias('count')).collect()}")
-
-
-
-
-
-
-# plot gains / losses for each demographic (choose top N?)
-# (repeat) add pre-filtering by sampling, measure + plot gains
-# (repeat) add post-filtering by bias, measure + plot gains
-# (repeat) add pre-processing for feature adjustment by bias, measure + plot gains
-# 
-
-# COMMAND ----------
-
-
-pdf_disparity = (df_disparity
-    .groupBy('zone').agg(
+# reload the TOP disparity zones from notebook one
+df_demo_disparity = (spark.read.format('delta').load(CREDENTIALS['paths']['demographics_disparity_base'])
+    .groupBy('zone', 'factor').agg(    # group to set zones we don't care about to zero
         F.min(F.col('overall_quantile')).alias('quantile'),
-        F.max(F.when(F.col('overall_quantile')==F.lit(1), F.col('cnt_zscore')).otherwise(F.lit(0))).alias('disparity'),
+        F.max(F.when(F.col('overall_quantile')==F.lit(1), F.col('cnt_zscore')).otherwise(F.lit(0))).alias('cnt_zscore'),
     )
-    .join(spark.read.format('delta').load(CREDENTIALS['paths']['nyctaxi_h3_zones']), ['zone'])
+)
+
+# note that there is some column renaming to perform first...
+row_stat_rides = df_zone_predict.select(F.mean('volume').alias('mean'), F.stddev('volume').alias('std')).collect()[0]
+pdf_zone_disparity = (df_zone_predict
+    .withColumnRenamed('pickup_zone', 'zone')
+    .withColumn("rides_z", (F.col('volume') - F.lit(row_stat_rides['mean']))/F.lit(row_stat_rides['std']))
+    .withColumnRenamed('volume', 'rides')
+    .select('zone', 'rides', 'rides_z')   # get simple rides, zones, rides_z
+    .join(df_demo_disparity, ['zone'])   # join with demos
+    .join(spark.read.format('delta').load(CREDENTIALS['paths']['geometry_nyctaxi'])  # add shape data
+          .select('zone', 'the_geom'), ['zone'])
+    .withColumnRenamed('the_geom', 'geometry')
     .toPandas()
 )
-display(pdf_disparity)
-pdf_disparity['geometry'] = pdf_disparity['geometry'].apply(lambda x: wkt.loads(x))
-num_total = len(pdf_disparity)
-num_active = len(pdf_disparity[pdf_disparity['quantile']==1])
+pdf_zone_disparity['disparity_z'] = delta_zscore_pandas(    # safer diff compute in z-domain
+    pdf_zone_disparity['cnt_zscore'], pdf_zone_disparity['rides_z'])
+
+# load geometry for plotting
+pdf_zone_disparity['geometry'] = pdf_zone_disparity['geometry'].apply(lambda x: wkt.loads(x))
 
 # load geometry for NEW YORK state; convert to geometry presentation format
 pdf_shape_states = (spark.read.format('delta').load(CREDENTIALS['paths']['geometry_state'])
@@ -539,38 +536,26 @@ pdf_shape_states = (spark.read.format('delta').load(CREDENTIALS['paths']['geomet
 )
 pdf_shape_states['geometry'] = pdf_shape_states['geometry'].apply(lambda x: wkt.loads(x))
 
-# num_total = len(pdf_sub['count'])
-shape_plot_map(pdf_disparity, col_viz='disparity', 
-               txt_title=f"Top Ethnicity Disparity Zones (z-score) by Demographic ({num_active}/{num_total} total zones)", 
-               gdf_background=pdf_shape_states, zscore=False)
-
-
-# COMMAND ----------
-
-
-
+# plot the new zone + disparity
+shape_plot_map(pdf_zone_disparity[pdf_zone_disparity['factor']=='ethnc_grp'], 
+               col_viz='disparity_z', gdf_background=pdf_shape_states, zscore=True,
+               txt_title=f"Ethnic Disparity of Predicted Zones (z-score)")
+# plot the new zone + disparity
+shape_plot_map(pdf_zone_disparity[pdf_zone_disparity['factor']=='hshld_incme_grp'], 
+               col_viz='disparity_z', gdf_background=pdf_shape_states, zscore=True,
+               txt_title=f"Income Disparity of Predicted Zones (z-score)")
 
 # COMMAND ----------
 
-# from pyspark.ml.tuning import CrossValidatorModel
-# cvModel = CrossValidatorModel.read().load('/users/ez2685/cvmodel')
-# print(cvModel.extractParamMap())
-
-# COMMAND ----------
-
-# load raw geo
-# encode   latitude_cif', 'longitude_cif , resolution 11
-# load cab rides
-# encode pickup and drop off at 11
-# encode pickup time into morning / afternoon / evening
-# encode pickup time by day of week
-# partition before/after for train/test
-# predict the locations that will be most profitable morning / afternoon / evening on days of week
-# generate model that predicts by areas
-
-# overlay biggest demographic classes by age or race or income
-# compare disparities for evening pickups
-
-# solution 1 - create model to better sample
-
-# solution 2- postfix to hit min score
+# MAGIC %md
+# MAGIC # Wrap-up
+# MAGIC That's it for this notebook for learning model building, what did we learn?
+# MAGIC 
+# MAGIC * One of the largest challenges in identifying bias in your model is understanding how it applies to your goals.
+# MAGIC * We created a predictor that aims to emulate historical ride distributions, but now we have a way to steer those predictions.
+# MAGIC * Due to the lack of granularity in our demographic data (no variance for population by time-of-day), we 
+# MAGIC   totally drop the day-part of our ride predictor model and just focus on zones.
+# MAGIC   * **NOTE**: Keeping your stakeholders informed with tough news is part of the job, even when the answer is
+# MAGIC     "We just don't have the data to know."
+# MAGIC 
+# MAGIC Let's check out ways to improve a model with external data.  The next notebook, proceed to the **03_fairness_modeling** demonstrates techniques using external (or auxiliary data) to do the job.

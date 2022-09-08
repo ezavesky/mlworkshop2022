@@ -114,6 +114,9 @@ def shape_plot_map(gdf_data, col_viz=None, txt_title='original plot', gdf_backgr
 
 # COMMAND ----------
 
+def delta_zscore_pandas(x1, x2):
+    return st.norm.ppf(np.clip(st.norm.cdf(x1) - st.norm.cdf(x2), 0.001, 0.9999))
+
 # helper to plot the variants of one population...
 def shape_plot_map_factors(gdf_data, col_factor, col_viz, txt_title='original plot', 
                            use_log=True, col_norm=None, col_disparity=None, gdf_background=None,
@@ -175,15 +178,13 @@ def shape_plot_map_factors(gdf_data, col_factor, col_viz, txt_title='original pl
         if use_log:   # need to dip in and out of log10?
             gdf_copy[col_viz] = 10 ** gdf_copy[col_viz]
         # Z-score normalize ((X - mean) / std-dev)
-        # gdf_copy[col_viz] = (gdf_copy[col_viz] - gdf_copy[col_mean]) / gdf_copy[col_std]  # Z-score norm
-        # percentage normalize ((X - mean) / mean)
-        gdf_copy[col_viz] = (gdf_copy[col_viz] - gdf_copy[col_mean]) / gdf_copy[col_std]  # percent-difference
+        gdf_copy[col_viz] = (gdf_copy[col_viz] - gdf_copy[col_mean]) / gdf_copy[col_std]  # Z-score norm
         zscore = True
         # end normalization
 
     # allow disparity rendering?
     if col_disparity is not None and col_disparity in gdf_copy.columns:
-        gdf_copy[col_viz] -= gdf_copy[col_disparity]
+        gdf_copy[col_viz] = delta_zscore_pandas(gdf_copy[col_viz], gdf_copy[col_disparity])
     # convert to percentage - https://stackoverflow.com/a/55146424
     if zscore:
         gdf_copy[col_viz] = st.norm.cdf(gdf_copy[col_viz]) * 100
