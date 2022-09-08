@@ -392,13 +392,6 @@ fn_log("Sneak peak at demographics...")
 df_demos_indexed = spark.read.format('delta').load(path_read)
 display(df_demos_indexed.limit(10))
 
-# pdf_sub = df_zones.toPandas().sort_values(by='count', ascending=False)
-# pdf_sub['geometry'] = pdf_sub['geometry'].apply(lambda x: wkt.loads(x))
-# num_total = len(pdf_sub['count'])
-# shape_plot_map(pdf_sub, col_viz='count_log10', txt_title=f"Zone Log-Count ({num_total} total zones)", 
-#                gdf_background=pdf_shape_states)
-
-
 
 # COMMAND ----------
 
@@ -430,6 +423,13 @@ path_read = CREDENTIALS['paths']['demographics_factors']
 
 if CREDENTIALS['constants']['EXPERIENCED_MODE'] and CREDENTIALS['constants']['WORKSHOP_ADMIN_MODE']:
     df_demos_pivot = demographic_factors_count(df_demos_indexed, list_factors=['zone'])
+    winFactor = Window.partitionBy('zone', 'factor')
+    df_demos_pivot = (df_demos_pivot    # add z-score to the demographics factors
+        .withColumn("cnt_mean", F.mean(F.col('count')).over(winFactor))
+        .withColumn("cnt_std", F.stddev(F.col('count')).over(winFactor))
+        .withColumn("cnt_zscore", (F.col('count') - F.col('cnt_mean'))/F.col('cnt_std'))
+        .drop('cnt_mean', 'cnt_std')
+    )
     dbutils.fs.rm(path_read, True)
     df_demos_pivot.write.format('delta').save(path_read)  # save new demographics factorized version
 
@@ -439,16 +439,10 @@ list_factors = df_demos_pivot.select('factor').distinct().collect()
 fn_log(f"These factors are available: {list_factors}")
 display(df_demos_pivot)
 
-# load geometry for nyc taxi zones
-df_shape_tlc = (
-    spark.read.format('delta').load(CREDENTIALS['paths']['geometry_nyctaxi'])
-    .withColumnRenamed('zone', '_zone_join')
-)
-
 # now we'll join
 pdf_demos_pivot_shape = (df_demos_pivot
-    .join(df_shape_tlc.select('_zone_join', 'the_geom'), df_shape_tlc['_zone_join']==df_demos_pivot['zone'])
-    .drop('_zone_join')
+    .join(spark.read.format('delta').load(CREDENTIALS['paths']['geometry_nyctaxi'])
+          .select('zone', 'the_geom'), ['zone'])
     .withColumn('count_log10', F.log(10.0, F.col('count')))
     .withColumnRenamed('the_geom', 'geometry')
     .toPandas()
