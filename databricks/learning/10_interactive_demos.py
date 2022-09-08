@@ -38,8 +38,8 @@ dbutils.widgets.removeAll()
 
 # create model map
 list_model_map = [['Raw Demographics (n1.e5)', None, 'Difference'], 
-                  ['Refined Fare Total (n2.e6)', 'nyctaxi_h3_historical', 'Ride Disparity'],
-                  ['Learned Fare Total (n2.e7)', 'nyctaxi_h3_learn_base', 'Ride Disparity'],
+                  ['Cleaned Raw Data (n2.e6)', 'nyctaxi_h3_historical', 'Ride Disparity'],
+                  ['Base Predicted Model (n2.e7)', 'nyctaxi_h3_learn_base', 'Ride Disparity'],
                  ]
 model_sel_last = None
 dbutils.widgets.dropdown("model", list_model_map[0][0], [x[0] for x in list_model_map])
