@@ -490,7 +490,7 @@ if CREDENTIALS['constants']['EXPERIENCED_MODE'] and CREDENTIALS['constants']['WO
     df_zone_predict.write.format('delta').save(path_read)
 
 df_zone_predict = spark.read.format('delta').load(path_read)
-display(df_predict)
+display(df_zone_predict)
 
 # COMMAND ----------
 
