@@ -575,4 +575,6 @@ for demo_group in dict_disparity_demos:
 # MAGIC 
 # MAGIC If you're hungry for more, proceed to the **02_predict_debiased** notebook next.
 # MAGIC 
+# MAGIC As a sneak-preview, we've created the **10_interactive_demos** notebook that allows provides a slightly interactive environment for visualization by different demographics and models that have been created in this workshop.
+# MAGIC 
 # MAGIC Alternatively, you can jump into the **90_byo_experiment** notebook to experiment a little on your own data, but this is extra credit and we may not get enough time to jump into the section beforehand.
