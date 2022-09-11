@@ -132,8 +132,12 @@ else:
 
 # define constants and reusable strings here
 CREDENTIALS['paths'].update({
-    'databricks_dataset': "abfss://mlworkshop2022@dsairgeneraleastus2sa.STORAGE", # "abfss://mlworkshop2022@STORAGE",
-    'geometry_base': "abfss://mlworkshop2022@dsairgeneraleastus2sa.STORAGE/tl_2021_us_zcta520/geometry", 
+    'databricks_dataset': "abfss://mlworkshop2022@STORAGE",
+    # dev 'databricks_dataset': "abfss://mlworkshop2022@dsairgeneraleastus2sa.STORAGE", 
+})
+CREDENTIALS['paths'].update({
+    # datasets that we may consider joining
+    'geometry_base': f"{CREDENTIALS['paths']['databricks_dataset']}/tl_2021_us_zcta520/geometry", 
 })
 CREDENTIALS['paths'].update({
     # datasets that we may consider joining
