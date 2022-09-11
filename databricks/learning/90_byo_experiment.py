@@ -27,6 +27,9 @@
 
 # COMMAND ----------
 
+# load your custom dataframe from your own scratch storage or prod location
+# NOTE 1: to join to a specific customer, you'll need a unique identifier (ban, cloc, etc)
+# NOTE 2: don't forget to grab your own token from the feature store and put it into the utilities/settings file
 df_custom_data = X
 
 # COMMAND ----------
