@@ -343,26 +343,25 @@ import pandas as pd
 from sklearn.model_selection import train_test_split
 from sklearn.metrics import mean_absolute_error, mean_squared_error, roc_auc_score, accuracy_score
 
-def model_sample_balance(df, col_label, col_dataset, val_train, val_test):
+def model_sample_balance(df, col_label, max_sample_imbalance=10):
     # apply stratified sampling
     pdf_ratio = (
-        # FILTER to TRAIN / $ FILTER TO TEST
-        
-        df_conv_embed.groupBy(F.col(col_label))
+        # FILTER to TRAIN / $ FILTER TO TEST        
+        df.groupBy(F.col(col_label))
         .agg(F.count(col_label).alias('count'))
         .toPandas()
-        .set_index('DISPOSITON_CONVERTED')
+        .set_index(col_label)
     )
-    dict_log_param['count_original'] = str(pdf_ratio['count'].to_dict())
-    dict_log_param['count_imblance_max'] = max_sample_imbalance
-    fn_log(f"Total label (original): {dict_log_param['count_original']}")
+    dict_log = {'count_original': str(pdf_ratio['count'].to_dict())}
+    dict_log['count_imblance_max'] = max_sample_imbalance
+    fn_log(f"[model_sample_balance] Total label (original): {dict_log['count_original']}")
     num_min = pdf_ratio['count'].min()
     pdf_ratio['ratio_total'] = (num_min * max_sample_imbalance)/pdf_ratio['count']
     pdf_ratio['ratio_max'] = pdf_ratio['ratio_total'].apply(lambda x: min(1.0, x))
     dict_ratio = pdf_ratio['ratio_max'].to_dict()
-    fn_log(f"Stratified sampling: {dict_ratio}")
-    df_conv_embed_resampled = df_conv_embed.sampleBy(F.col("DISPOSITON_CONVERTED"), fractions=dict_ratio, seed=42)
-    return pdf_train, pdf_test
+    fn_log(f"[model_sample_balance] Stratified sampling: {dict_ratio}")
+    df_resampled = df.sampleBy(F.col(col_label), fractions=dict_ratio, seed=42)
+    return df_resampled, dict_log
 
 
 def model_pandas_split(pdf_train, pdf_test, col_label, train_subsample=0.2):
