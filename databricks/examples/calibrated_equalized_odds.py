@@ -7,6 +7,12 @@ from sklearn.utils.validation import check_is_fitted
 
 # COMMAND ----------
 
+# examples for using this class / functionality
+# https://github.com/Trusted-AI/AIF360/blob/master/examples/sklearn/demo_fairadapt_sklearn.ipynb
+# https://aif360.readthedocs.io/en/latest/modules/generated/aif360.sklearn.postprocessing.CalibratedEqualizedOdds.html#aif360.sklearn.postprocessing.CalibratedEqualizedOdds
+
+# COMMAND ----------
+
 # from aif360.sklearn.utils import check_inputs, check_groups
 
 # code copied from this location

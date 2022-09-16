@@ -456,8 +456,7 @@ df_test = df_labeled.filter(F.col('dataset')==F.lit('test'))
 #    this code will actually train a new model based on the input `list_features` using the label `col_label`
 #    this code should be generic enough for you to reuse in your own 
 if CREDENTIALS['constants']['EXPERIENCED_MODE'] and CREDENTIALS['constants']['WORKSHOP_ADMIN_MODE']:
-    col_label = 'is_top'
-    list_features = ['passenger_count', 'trip_distance', 'total_amount', 'dropoff_zone', 'ride_duration', 'pickup_hour', 'dropoff_hour', 'dropoff_daypart', 'day_of_week', 'weekpart', 'month_of_year', 'week_of_year', 'pickup_zone', 'pickup_daypart']
+    col_label, list_features = taxi_train_columns()
 
     # comprehensive check for impact by data size
     # list_ratio_test = [0.05, 0.5, 0.8]
@@ -523,6 +522,8 @@ pdf_zone_disparity = (df_zone_predict
     .withColumnRenamed('the_geom', 'geometry')
     .toPandas()
 )
+# NOTE: This isn't an actual volume disparity because demographics are normalized by zone
+#       and ride volumes are normalized across the entire system.
 pdf_zone_disparity['disparity_z'] = delta_zscore_pandas(    # safer diff compute in z-domain
     pdf_zone_disparity['cnt_zscore'], pdf_zone_disparity['rides_z'])
 
@@ -539,11 +540,11 @@ pdf_shape_states['geometry'] = pdf_shape_states['geometry'].apply(lambda x: wkt.
 # plot the new zone + disparity
 shape_plot_map(pdf_zone_disparity[pdf_zone_disparity['factor']=='ethnc_grp'], 
                col_viz='disparity_z', gdf_background=pdf_shape_states, zscore=True,
-               txt_title=f"Ethnic Disparity of Predicted Zones (z-score)")
+               txt_title=f"Ethnic Disparity of Predicted Zones (%)")
 # plot the new zone + disparity
 shape_plot_map(pdf_zone_disparity[pdf_zone_disparity['factor']=='hshld_incme_grp'], 
                col_viz='disparity_z', gdf_background=pdf_shape_states, zscore=True,
-               txt_title=f"Income Disparity of Predicted Zones (z-score)")
+               txt_title=f"Income Disparity of Predicted Zones (%)")
 
 # COMMAND ----------
 

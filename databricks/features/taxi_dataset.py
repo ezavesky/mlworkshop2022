@@ -182,3 +182,12 @@ def taxi_zone_demo_disparities(factor_limit, path_demos=None, quantile_size=10):
     )
     return df_disparity
 
+
+# COMMAND ----------
+
+def taxi_train_columns():
+    """Return tuple of (label_col, list_feature_cols) for easier training in different scenarios"""
+    col_label = 'is_top'
+    list_features = ['passenger_count', 'trip_distance', 'total_amount', 'dropoff_zone', 'ride_duration', 'pickup_hour', 'dropoff_hour', 'dropoff_daypart', 'day_of_week', 'weekpart', 'month_of_year', 'week_of_year', 'pickup_zone', 'pickup_daypart']
+    return col_label, list_features
+
