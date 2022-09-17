@@ -198,6 +198,13 @@ display(df_date_summary)
 # COMMAND ----------
 
 # MAGIC %md
+# MAGIC **Interactive Note**
+# MAGIC 
+# MAGIC ... and hop back to the slides "Basic Modeling – Data Partitions and Truth" to follow along
+
+# COMMAND ----------
+
+# MAGIC %md
 # MAGIC ## Data Clean-up
 # MAGIC Looking above, we can see that our data looks better (total fare doesn't fall to zero) but there is less 
 # MAGIC of it (we truncate at mid 2016).  Overall, that's okay because we've resampled to have a comprehensive set
@@ -404,6 +411,13 @@ taxi_plot_timeline(pdf_stat_label, col_value='mean_total', vol_volume='volume', 
 # COMMAND ----------
 
 # MAGIC %md
+# MAGIC **Interactive Note**
+# MAGIC 
+# MAGIC ... and hop back to the slides "Basic Modeling – Basic Modeling and Impact on Demographics" to follow along
+
+# COMMAND ----------
+
+# MAGIC %md
 # MAGIC ### Data Check by Visualization
 # MAGIC First, the distribution check seems accurate across fares, distanace, and duration.
 # MAGIC Interestingly the generation distributions seem to show regular patterns (low and high spikes) 
@@ -560,3 +574,10 @@ shape_plot_map(pdf_zone_disparity[pdf_zone_disparity['factor']=='hshld_incme_grp
 # MAGIC     "We just don't have the data to know."
 # MAGIC 
 # MAGIC Let's check out ways to improve a model with external data.  The next notebook, proceed to the **03_fairness_modeling** demonstrates techniques using external (or auxiliary data) to do the job.
+
+# COMMAND ----------
+
+# MAGIC %md
+# MAGIC **Interactive Note**
+# MAGIC 
+# MAGIC ... and hop back to the slides "Cautionary Examples Understanding Bias in Data" to follow along

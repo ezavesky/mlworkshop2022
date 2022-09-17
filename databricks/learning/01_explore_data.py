@@ -138,6 +138,13 @@ display(df_taxi_encoded)
 # COMMAND ----------
 
 # MAGIC %md
+# MAGIC **Interactive Note**
+# MAGIC 
+# MAGIC ... and hop back to the slides "CDS Basics – Visualizing your Data" to follow along.
+
+# COMMAND ----------
+
+# MAGIC %md
 # MAGIC ## Let's map to a region for ML/AI Enrichment!
 # MAGIC * Okay, now that we have our samples and some undertanding of where they happened, let's map
 # MAGIC   them to regions that make sense.
@@ -230,6 +237,13 @@ shape_plot_map(pdf_sub, col_viz='count_log10', txt_title=f"Zipcode Log-Count ({n
 # COMMAND ----------
 
 # MAGIC %md
+# MAGIC **Interactive Note**
+# MAGIC 
+# MAGIC ... and hop back to the slides "Live Quiz" to follow along.
+
+# COMMAND ----------
+
+# MAGIC %md
 # MAGIC ### Quiz Time!
 # MAGIC Okay, what do you as CDSs think that we can do to improve this data?
 # MAGIC 
@@ -248,6 +262,13 @@ fn_log(f"Cities ({len(list_cities)} unique): {list_cities} ")
 shape_plot_map(pdf_sub_part, col_viz='count_log10', txt_title=f"Zipcode Log-Count ({num_total} total zips, {len(list_cities)} total cities)", 
                gdf_background=pdf_shape_states)
 
+
+# COMMAND ----------
+
+# MAGIC %md
+# MAGIC **Interactive Note**
+# MAGIC 
+# MAGIC ... and hop back to the slides "Live Quiz! Data Slicing" to follow along
 
 # COMMAND ----------
 
@@ -335,6 +356,13 @@ shape_plot_map(pdf_sub, col_viz='count_log10', txt_title=f"Zone Log-Count ({num_
 # MAGIC * Incorporating external data can add some SME (subject matter expert) spice to our modeling
 # MAGIC 
 # MAGIC We know about ride volume, but let's dig into knowing about our customers as well.
+
+# COMMAND ----------
+
+# MAGIC %md
+# MAGIC **Interactive Note**
+# MAGIC 
+# MAGIC ... and hop back to the slides "CDS discussion – Sourcing enrichment data" to follow along.
 
 # COMMAND ----------
 
@@ -506,6 +534,13 @@ shape_plot_map_factors(pdf_sub, col_factor='value', col_viz='count_log10', use_l
 # COMMAND ----------
 
 # MAGIC %md
+# MAGIC **Interactive Note**
+# MAGIC 
+# MAGIC ... and hop back to the slides "CDS discussion – Bias in Data" to follow along.
+
+# COMMAND ----------
+
+# MAGIC %md
 # MAGIC ### Consolidated Disparity Maps
 # MAGIC In this final cell, we'll combine the disaprities that we detect across different demographics into 
 # MAGIC single maps.  In doing so, we're filtering to find the top decile (e.g. top 10%) of zones with population disparities.  
@@ -578,3 +613,10 @@ for demo_group in dict_disparity_demos:
 # MAGIC As a sneak-preview, we've created the **10_interactive_demos** notebook that allows provides a slightly interactive environment for visualization by different demographics and models that have been created in this workshop.
 # MAGIC 
 # MAGIC Alternatively, you can jump into the **90_byo_experiment** notebook to experiment a little on your own data, but this is extra credit and we may not get enough time to jump into the section beforehand.
+
+# COMMAND ----------
+
+# MAGIC %md
+# MAGIC **Interactive Note**
+# MAGIC 
+# MAGIC ... and hop back to the slides "Live Quiz! Enrichment Data" to follow along.
