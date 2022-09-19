@@ -554,10 +554,9 @@ dict_disparity_demos = {'ethnc_grp':"Ethnicity", 'hshld_incme_grp':"Income"}    
 
 if CREDENTIALS['constants']['EXPERIENCED_MODE'] and CREDENTIALS['constants']['WORKSHOP_ADMIN_MODE']:
     df_disparity = None
-    for demo_group in dict_disparity_demos:
-        # df_disparity = taxi_zone_demo_disparities('hshld_incme_grp', quantile_size=10)
+    for demo_group in ['gnrt', 'ethnc_grp', 'gndr', 'hshld_incme_grp', 'edctn', 'marital_status_cif']:
         df_disparity_tmp = taxi_zone_demo_disparities(demo_group, quantile_size=10)
-        df_grouped = (df_disparity
+        df_grouped = (df_disparity_tmp
             .filter(F.col('overall_quantile')==F.lit(1))
             .groupBy('value').agg(
                 F.count('value').alias('count'),
