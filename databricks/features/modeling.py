@@ -31,6 +31,12 @@ import numpy as np
 
 # COMMAND ----------
 
+########################################################################################
+#### The code below is for general model training and evaluation (with a spark model)
+########################################################################################
+
+# COMMAND ----------
+
 def modeling_gridsearch(df_train, col_label, num_folds=3, parallelism=1):
     """General search across a known grid using training data and a label target
             general_gridsearch('run', df_train, col_label)
@@ -142,8 +148,21 @@ def modeling_gridsearch(df_train, col_label, num_folds=3, parallelism=1):
 
 # COMMAND ----------
 
+# https://stackoverflow.com/a/46077238
+def compute_prediction_threshold(y_truth, y_prob):
+    event_rate = sum(y_truth) / len(y_prob) * 100
+    threshold = np.percentile(y_prob, 100 - event_rate)
+    fn_log(f"Cutoff/threshold at: {threshold}")
+    # y_pred = [1 if x >= threshold else 0 for x in y_prob[:, 1]]
+    return threshold
+
 def modeling_train(df_train, df_test, col_label, model_name, pipeline, dict_param_extra,
-                   list_inputs=None, name_experiment=CREDENTIALS['constants']['EXPERIMENT_NAME']):
+                   list_inputs=None, name_experiment=CREDENTIALS['constants']['EXPERIMENT_NAME'],
+                   model_type='spark'):
+    """Given a 'pipeline', use mlflow to log a trained model from `df_train` and evaluated on `df_test`.
+        Logs with `model_name` and certain extra parameters.  You can now use this function to train either
+        a spark- or sklearn-based pipeline with "spark" or "sklearn" for `model_type`.
+    """
     import datetime as dt
     import os  # for removing the temp file
     from sklearn.metrics import confusion_matrix, ConfusionMatrixDisplay, roc_curve, RocCurveDisplay, precision_recall_curve, PrecisionRecallDisplay, classification_report
@@ -157,37 +176,63 @@ def modeling_train(df_train, df_test, col_label, model_name, pipeline, dict_para
     dt_begin = dt.datetime.now()
     run_name = f"{model_name}_{dt_begin.strftime('%Y%m%d-%H%M%S')}"  # if we had some other models, we could consider them
     udf_last = F.udf(lambda v:float(v[-1]), T.FloatType())
+    class_pos = 1
 
     with mlflow.start_run(run_name=run_name) as run:
         # immediately run training and eval against test set
-        clf = pipeline.fit(df_train)
-        df_train_result = clf.transform(df_train)
-        list_outputs = [f"{col_label}_predict", f"{col_label}_probability"]
-        pdf_train = df_train_result.select(col_label, *list_outputs).toPandas()
+        if model_type == 'spark':
+            clf = pipeline.fit(df_train)
+            df_train_result = clf.transform(df_train)
+            list_outputs = [f"{col_label}_predict", f"{col_label}_probability"]
+            pdf_train = df_train_result.select(col_label, *list_outputs).toPandas()
+
+            # re-run on testing data
+            df_pred = clf.transform(df_test)
+            pdf_pred = df_pred.select(col_label, *list_outputs).toPandas()
+            train_score = clf.transform(df_train).select(f"{col_label}_predict").toPandas()
+
+            y_test = pdf_pred[col_label]
+            y_train = df_train.select(col_label).toPandas()
+            test_pred = pdf_pred[f"{col_label}_predict"]
+            test_score = pdf_pred[f"{col_label}_probability"]
+            
+        elif model_type == 'sklearn':
+            if list_inputs is None:
+                list_inputs = list(set(list(df_train.columns)) - set(list(col_label)))
+            pipeline.fit(df_train[list_inputs], df_train[col_label])
+            clf = pipeline
+            
+            # run predictions
+            y_test = df_test[col_label]
+            y_train = df_train[col_label]
+            test_pred = pp.predict(df_test[list_inputs])
+            test_score = pp.predict_proba(df_test[list_inputs])[:,-1]
+            train_score = pp.predict_proba(df_train[list_inputs])[:,-1]
+            
+        else:
+            str_log = f"[modeling_train] Unknown model type '{model_type}' in training, aborting."
+            fn_log(str_log)
+            raise Exception(str_log)
 
         # you don't have to, but we've found that the natural calibration for 
         #   a threshold doesn't always end up at 0.5; so this helper detects that
         #   threshold on the training data and uses that to recompute the final prediction
-        class_pos = 1
-        # re-run on testing data
-        df_pred = clf.transform(df_test)
-        pdf_pred = df_pred.select(col_label, *list_outputs).toPandas()
+        score_thresh = compute_prediction_threshold(y_train, train_score)
+        mlflow.log_param("decision_threshold", score_thresh)
 
-        y_test = pdf_pred[col_label]
-        test_pred = pdf_pred[f"{col_label}_predict"]
-        test_score = pdf_pred[f"{col_label}_probability"]
-        
         ## STEP 2: display some performance figures, like a confusion matrix and precision/recall curves
         # test_pred = clf.predict_proba(X_test)[:,1] > score_thresh
         cm = confusion_matrix(y_test, test_pred, normalize='all')
         test_auc = roc_auc_score(y_test, test_score)
+        train_auc = roc_auc_score(y_train, train_score)
 
         cm_fig, ax1 = plt.subplots(1, 1, figsize=(8, 6))
         cm_display = ConfusionMatrixDisplay(cm).plot(ax=ax1)
-        ax1.set_title(f"Total Samples: {len(pdf_pred)}")        
-
-        # y_score = clf.predict_proba(X_test)[:,1]
-        # y_score = y_pred
+        ax1.set_title(f"Total Samples: {len(y_train)}")
+        train_acc = accuracy_score(y_train, train_score > score_thresh)
+        test_acc = accuracy_score(y_test, test_score > score_thresh)
+        fn_log(f"Training AUC is %{train_auc:.4f}, Accuracy is %{train_acc:.4f}")
+        fn_log(f"Test AUC is %{test_auc:.4f}, Accuracy is %{test_acc:.4f}")
 
         fpr, tpr, _ = roc_curve(y_test, test_score, pos_label=class_pos)
         roc_fig, ax1 = plt.subplots(1, 1, figsize=(8, 6))
@@ -215,8 +260,13 @@ def modeling_train(df_train, df_test, col_label, model_name, pipeline, dict_para
 
         # parameters that change the experiment/
         mlflow.log_param("model_name", model_name)
-        n_pos = df_train.filter(F.col(col_label) > F.lit(0)).count()
-        n_neg = df_train.filter(F.col(col_label) < F.lit(1)).count()
+        if model_type == 'spark':
+            n_pos = df_train.filter(F.col(col_label) > F.lit(0)).count()
+            n_neg = df_train.filter(F.col(col_label) < F.lit(1)).count()
+        elif model_type == 'sklearn':
+            n_pos = len(df_train[df_train[col_label] > 0])
+            n_neg = len(df_train[df_train[col_label] < 1])
+
         mlflow.log_param("samples_pos", n_pos)
         mlflow.log_param("samples_neg", n_neg)
         mlflow.log_param("samples_ratio", float(n_neg)/n_pos)
@@ -248,15 +298,34 @@ def modeling_train(df_train, df_test, col_label, model_name, pipeline, dict_para
         #mlflow.log_dict(dict_report, 'report_dict.json')
 
         # and the model artifact
-        if list_inputs is not None:
-            df_input_sig = df_test.select(list_inputs).limit(10)
-            df_output_sig = df_pred.select(list_outputs).limit(10)
+        if model_type == 'spark':
+            if list_inputs is not None:
+                df_input_sig = df_test.select(list_inputs).limit(10)
+                df_output_sig = df_pred.select(list_outputs).limit(10)
+                signature = infer_signature(df_input_sig, df_output_sig)
+                # add an input example
+                input_example = df_input_sig.limit(1).toPandas()
+                mlflow.spark.log_model(clf, model_name, input_example=input_example, signature=signature)
+            else:
+                mlflow.spark.log_model(clf, model_name)
+
+        elif model_type == 'sklearn':
+            # remap predict function (NOTE: special recommendation from mlflow - https://github.com/mlflow/mlflow/issues/694#issuecomment-515604470 and https://github.com/mlflow/mlflow/issues/5337)
+            def predict_onedim(nd_feat, _clf, _threshold):
+                nd_prob = _clf.predict_proba(nd_feat)[:, -1] # > _threshold
+                return nd_prob   # -1=score
+            clf.predict_legacy = clf.predict
+            clf.predict = partial(predict_onedim, _clf=clf, _threshold=score_thresh)
+            df_pred = clf.predict(df_test[list_inputs])
+
+            # and the model artifact
+          
+            df_input_sig = df_test[list_inputs].head(10)
+            df_output_sig = test_score
             signature = infer_signature(df_input_sig, df_output_sig)
-            # add an input examlpe
-            input_example = df_input_sig.limit(1).toPandas()
-            mlflow.spark.log_model(clf, model_name, input_example=input_example, signature=signature)
-        else:
-            mlflow.spark.log_model(clf, model_name)
+            # add an input example
+            input_example = df_test[list_inputs].head(1)
+            mlflow.sklearn.log_model(clf, model_name, input_example=input_example, signature=signature)
 
         # reload your experiment view, we just wrote to a new run...
         fn_log(f"New run logged {run.info}...")
@@ -292,7 +361,7 @@ def model_lookup(name_model=None, name_experiment=CREDENTIALS['constants']['EXPE
     return experiment_obj['run_id'], experiment_obj
 
 # helper to predict on specific dataframe
-def model_predict(df_input, name_model, list_col_keep=None, model_meta=None):
+def model_predict(df_input, name_model, list_col_keep=[], model_meta=None):
     if model_meta is None:   # backwards compatible if no experiment provided - 7/23
         _, model_meta = model_lookup(name_model)
     list_prior = df_input.dtypes
@@ -307,7 +376,7 @@ def model_predict(df_input, name_model, list_col_keep=None, model_meta=None):
     df_predict = df_predict.withColumn('model_id', F.lit(model_meta['run_id']))
     list_final = df_predict.dtypes
     
-    if list_col_keep is not None:
+    if list_col_keep:
         list_diff = [x[0] for x in list(set(list_final) - set(list_prior))]
         list_diff += list_col_keep
         df_predict = df_predict.select(list_diff)
@@ -315,6 +384,87 @@ def model_predict(df_input, name_model, list_col_keep=None, model_meta=None):
     # return combined predictions
     return df_predict
 
+
+def pyspark_classify_udf(bc_classify_model):
+    @F.pandas_udf(T.FloatType())
+    def classify_F(content_series_iter: Iterator[Tuple[pd.Series, pd.Series]]) -> Iterator[pd.Series]:
+        model_classify = bc_classify_model.value
+
+        # TODO: consider batching instead?
+        for embed_cols in content_series_iter:  # loop through each row
+            list_batch = []
+            for idx_v in range(len(embed_cols[0])):
+                nd_embed = np.hstack([embed[idx_v] for embed in embed_cols])   # concatenate into a single vector
+                fn_log(f"[pyspark_classify_udf] Prior shape {nd_embed.shape}...")
+                nd_shaped = nd_embed.reshape((1, nd_embed.shape[-1]))
+                
+                # append the result score from flattened classifier
+                prob = model_classify.predict(nd_shaped)
+                list_batch.append(prob[0])
+
+                # TODO: batch consideration?
+            yield pd.Series(list_batch)
+    return classify_F
+
+
+# helper to adapt prior model scores with a new post-modeling option
+def model_adapt(df_input, name_model, list_col_predict, list_col_keep=[], list_col_index=[], model_meta=None):
+    if model_meta is None:   # backwards compatible if no experiment provided - 7/23
+        _, model_meta = model_lookup(name_model)
+    list_prior = df_input.dtypes
+
+    # Predict on a Spark DataFrame.
+    logged_model = f"runs:/{model_meta['run_id']}/{model_meta['params.model_name']}"
+    fn_log(f"[model_adapt]: Retrieved valid model, run: {model_meta['run_id']}, url: {logged_model}")
+
+    if True:
+        # the particular method we're using to get debiased modeling also depends on some 
+        # pandas indexing.  so, we have no choice but to dip into pandas momentarily.  note that 
+        # this code does not work fully on a spark environment (maybe it should be broadcast?) but
+        # the model is small enough that we'll let it ride  (update 9/20)
+                
+        # convert to pandas
+        col_uni = '_uni_predict'
+        df_input = df_input.withColumn(col_uni, F.monotonically_increasing_id())
+        pdf_input = df_input.select(*list_col_predict, *list_col_index, col_uni).toPandas().set_index(col_uni)
+
+        # Load model as a scikit model
+        loaded_model = mlflow.sklearn.load_model(logged_model)
+        # run prediction in pandas-land
+        pd_col = loaded_model.predict(pdf_input.set_index(*list_col_index))
+        # reindex results as a new pandas dataframe
+        pdf_result = pd.DataFrame(pd_col, columns=['adapted_prob'], index=pdf_input.index).reset_index()
+        
+        # join to spark dataframe
+        df_predict = df_input.join(spark.createDataFrame(pdf_result), [col_uni]).drop(col_uni)
+
+    else:
+        # Load model as a Spark UDF. Override result_type if the model does not return double values.
+        loaded_model = mlflow.pyfunc.spark_udf(spark, model_uri=logged_model, result_type='double')
+        df_predict = (df_input # .repartition(num_workers * 16)   # TODO: may have to update for actual cores on worker
+            .withColumn(f'adapted_prob', loaded_model(F.struct(*map(F.col, *list_col_predict))))
+            # .select(list_col_extra + [f'{name_product}_adapted'])
+        )
+    
+    # theshold for final decision?
+    threshold_model = None
+    if 'params.decision_threshold' in model_meta:
+        threshold_model = float(model_meta['params.decision_threshold'])
+        fn_log(f"[model_adapt]: Applying decision threshold: {threshold_model}")
+        df_predict = (
+            df_predict.withColumn(f'adapted_predict', 
+                                  F.when(F.col(f'adapted_prob') >= F.lit(threshold_model), 1)
+                                  .otherwise(0)
+            )
+        )
+    if list_col_keep:
+        list_diff = [x[0] for x in list(set(list_final) - set(list_prior))]
+        list_diff += list_col_keep
+        df_predict = df_predict.select(list_diff)    
+    df_predict = df_predict.withColumn('model_id', F.lit(model_meta['run_id'])) 
+    
+    # return combined predictions
+    return df_predict
 
 # COMMAND ----------
 
@@ -324,10 +474,35 @@ def model_predict(df_input, name_model, list_col_keep=None, model_meta=None):
 # COMMAND ----------
 
 ########################################################################################
+#### The code below is for bias migtation training
+########################################################################################
+
+# COMMAND ----------
+
+def model_predict_subsample(df_source, df_aux, factor_limit, subsample_part=None):
+    # pull out our test data from the labeled dataset
+    df_source_pred = model_predict(df_source, "taxi_popular")
+    # display(df_valid_pred)
+    if subsample_part is None:
+        subsample_part = CREDENTIALS['constants']['DATA_SUBSAMPLE_RATIO']
+
+    # join the aux features with our predictions
+    col_id = "_uni_id"
+    df_demos_mitigate = (df_source_pred.sample(subsample_part)
+        .withColumnRenamed('pickup_zone', 'zone')
+        #.select('zone', 'is_top', 'is_top_probability')
+        .join(df_aux.filter(F.col('factor')==F.lit(factor_limit)), ['zone'])
+        .withColumn(col_id, F.monotonically_increasing_id())
+        .fillna(0)
+    )
+    return df_demos_mitigate
+
+# COMMAND ----------
+
+########################################################################################
 #### THE CODE BELOW THIS POINT IS NOT CURRENTLY IN USE BUT IS AVAILABLE FOR INSPECTION
 #### OF OTHER MODEL DEVELEOPMENT OPTIONS
 ########################################################################################
-
 
 # COMMAND ----------
 
