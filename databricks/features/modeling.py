@@ -336,16 +336,16 @@ def modeling_train(df_train, df_test, col_label, model_name, pipeline, dict_para
 # COMMAND ----------
 
 # helper to predict on specific dataframe
-def model_lookup(name_model=None, name_experiment=CREDENTIALS['constants']['EXPERIMENT_NAME']):
+def model_lookup(name_model=None, name_experiment=CREDENTIALS['constants']['EXPERIMENT_NAME'], verbose=True):
 #     fn_log("[decisionmaker_predict] Broadcasting weights...")
     # first, look for models marked as proudciton
     tags_search = {'tags.production': 1}
     if name_model is not None:  # provide a specific product?
         tags_search['tags.model_name'] = name_model
-    experiment_pdf = databricks_mlflow_load(name_experiment, tag_dict=tags_search)
+    experiment_pdf = databricks_mlflow_load(name_experiment, tag_dict=tags_search, verbose=verbose)
     if not len(experiment_pdf):   # fallback to mon-production
         tags_search['tags.production'] = 0
-        experiment_pdf = databricks_mlflow_load(name_experiment, tag_dict=tags_search)
+        experiment_pdf = databricks_mlflow_load(name_experiment, tag_dict=tags_search, verbose=verbose)
     if not len(experiment_pdf):
         fn_log(f"[model_lookup]: Failed to retrieve valid model, aborting.")
         return None

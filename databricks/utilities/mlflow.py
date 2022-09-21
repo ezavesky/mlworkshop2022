@@ -41,11 +41,12 @@ def databricks_mlflow_delete(notebook_name):
 
 # COMMAND ----------
 
-def databricks_mlflow_load(notebook_name, metric_sort="metrics.auc", tag_dict=None, load_central=True):
+def databricks_mlflow_load(notebook_name, metric_sort="metrics.auc", tag_dict=None, load_central=True, verbose=True):
     name_experiment = f"{CREDENTIALS['paths']['notebooks']}/{notebook_name}"
     if load_central:
         name_experiment = f"/Users/ez2685@DOMAIN/MLWS22-ez2685"
-        fn_log(f"[databricks_mlflow_load] NOTE: You are temporarily loading models ONLY from the workshop repo ('{name_experiment}'), not your own store.  Pass `load_central`=False or alter this function to change the default behavior.")
+        if verbose:
+            fn_log(f"[databricks_mlflow_load] NOTE: You are temporarily loading models ONLY from the workshop repo ('{name_experiment}'), not your own store.  Pass `load_central`=False or alter this function to change the default behavior.")
 
     #  1. create the experiment once via the notebook, like: 
     try:
