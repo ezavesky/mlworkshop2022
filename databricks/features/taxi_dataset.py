@@ -93,9 +93,11 @@ def taxi_postproc_volumes(df_predict):
         .groupBy('pickup_zone').agg(
             F.mean(F.col('total_amount')).alias('mean_total'),
             F.mean(F.col('_pred_total')).alias('mean'),
-            F.sum(F.col('total_amount')).alias('sum_total'),
+            F.sum(F.col('total_amount')).alias('sum_total'),  # cost/profit
+            F.sum(F.col('_top_total')).alias('sum_top'),
             F.sum(F.col('_pred_total')).alias('sum'),
-            F.sum(F.col('volume')).alias('volume_total'),
+            F.sum(F.col('volume')).alias('volume_total'),  # ride volume
+            F.sum(F.col('_top_volume')).alias('volume_top'),
             F.sum(F.col('_pred_volume')).alias('volume'),
         )
     )
