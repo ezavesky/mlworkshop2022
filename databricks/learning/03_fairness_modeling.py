@@ -117,7 +117,7 @@ display(df_demos_aux)
 # COMMAND ----------
 
 # MAGIC %md
-# MAGIC ### Clean modeling tuning with a validation dataset
+# MAGIC ### Clean model tuning with a validation dataset
 # MAGIC We're training a post-model correction from the [AIF360](https://github.com/Trusted-AI/AIF360) library by IBM.  For a single binary model at a time, it will try to make sure there is equal fairness between majority and non-majority classes.
 # MAGIC 
 # MAGIC * **tune on validation** - In training this second model, we can't cheat with training data we've already used, so be sure to use validation only.
@@ -166,6 +166,9 @@ if CREDENTIALS['constants']['EXPERIENCED_MODE'] and CREDENTIALS['constants']['WO
         pdf_test[col_no_predict] = 1 - pdf_test[col_predicted]
         pdf_test = pdf_test.set_index(col_protected)
 
+        #     par_gap = statistical_parity_difference(pdf_valid_pred['is_top'], pdf_valid_pred['is_top_predict'], 
+        #                                             prot_attr=col_disparity_type, priv_group=class_privilaged, pos_label=1)
+        
         # from aif360.sklearn.postprocessing import CalibratedEqualizedOdds
         pp = CalibratedEqualizedOdds(col_protected, cost_constraint='weighted', random_state=42)
 
@@ -179,22 +182,45 @@ if CREDENTIALS['constants']['EXPERIENCED_MODE'] and CREDENTIALS['constants']['WO
         fn_log(f"Wrote model {run_name} (time: {dt.datetime.now() - dt_training})")
 
 # print some information about the models
-for factor_active in list_factors_adapt:
+model_metrics = []
+for factor_active in list_factors_adapt + ['_base']:
     name_model = f"mitigate_{factor_active}"
-    _, model_meta = model_lookup(name_model)
-    fn_log(f"[Factor: {factor_active}:] {model_meta}")
+    if factor_active == '_base':
+        name_model = "taxi_popular"
+    # retrieve model, prepare data to print
+    _, model_meta = model_lookup(name_model, verbose=False)
+    obj_metric = {x.replace('metrics.', ''):float(model_meta[x])
+                  for x in list(model_meta.keys()) if x.startswith('metrics.') and 'samples' not in x}
+    obj_metric['factor'] = factor_active
+    fn_log(f"[Factor: {factor_active}] {obj_metric}")
+    # refactor a little so we can plot it
+    model_metrics.append(obj_metric)
     fn_log(f"=======================================")
+
+# transform into dataframe for a quick plot
+ax = pd.DataFrame(model_metrics).set_index('factor').plot.barh()
+ax.grid()
+ax.legend(loc='lower left')
+
+# COMMAND ----------
+
+# MAGIC %md
+# MAGIC **Interactive Note**
+# MAGIC 
+# MAGIC ... and hop back to the slides "Bias in Data – Detailed Focus on Changes (hands-on exercise n3.e10)" to follow along.
 
 # COMMAND ----------
 
 # MAGIC %md
 # MAGIC ### Adjusted Debiased Predictions (for now, binary)
-# MAGIC We've trained different models for a subset of important demographic factors.  Now, to bring it home, we'll reapply the 
+# MAGIC We've trained different models for a subset of important demographic factors and except for the `edctn` (education) model, we see marginal loss of performance versus the `_base` model from notebook 2.
+# MAGIC 
+# MAGIC Now, to bring it home, we'll reapply the 
 # MAGIC learning and prediction model to see if we were able to mitigate some of the effected areas.  The utility in this area
 # MAGIC is showing that we can use pre-trained models to evaluate on new data.  However, it should be noted that the classifier we
 # MAGIC used still requires the aux data indicating that a bias was found in a zone (e.g. the `mitigation_needed` column).
 # MAGIC 
-# MAGIC First we run the predictions off line and store them for speed.
+# MAGIC Below, we run the predictions off line and store them for speed.
 
 # COMMAND ----------
 
@@ -235,56 +261,11 @@ if CREDENTIALS['constants']['EXPERIENCED_MODE'] and CREDENTIALS['constants']['WO
 # COMMAND ----------
 
 # MAGIC %md
-# MAGIC Now we plot the disparity differences side by side.  
+# MAGIC ## n3.e10 Detailed Focus on Changes
+# MAGIC Now we plot the disparity differences side by side to see the impacts of this final modeling step.
 # MAGIC 
 # MAGIC This is also another chance for you to jump into the `10_interactive_demos` notebook for more interactive/self analysis
 # MAGIC of the impact on demographics.
-
-# COMMAND ----------
-
-# compute the gains byb volume and profit wihtin model
-
-df_debias = (spark.read.format('delta').load(CREDENTIALS['paths'][f'nyctaxi_debias_ethnc_grp'])
-    .withColumn('delta_volume', F.col('volume_top') - F.col('volume'))
-    .withColumn('delta_profit', F.col('sum_top') - F.col('sum'))
-    .withColumnRenamed('pickup_zone', 'zone')
-)
-pdf_profit = (
-    df_debias.orderBy(F.col('delta_profit').desc()).limit(10)
-    .union(df_debias.orderBy(F.col('delta_profit').asc()).limit(10))
-    .join(spark.read.format('delta').load(CREDENTIALS['paths']['geometry_nyctaxi'])  # add shape data
-          .select('zone', 'the_geom'), ['zone'])
-    .withColumnRenamed('the_geom', 'geometry')
-    .toPandas()
-)
-pdf_profit['geometry'] = pdf_profit['geometry'].apply(lambda x: wkt.loads(x))
-
-pdf_volume = (
-    df_debias.orderBy(F.col('delta_volume').desc()).limit(10)
-    .union(df_debias.orderBy(F.col('delta_volume').asc()).limit(10))
-    .join(spark.read.format('delta').load(CREDENTIALS['paths']['geometry_nyctaxi'])  # add shape data
-          .select('zone', 'the_geom'), ['zone'])
-    .withColumnRenamed('the_geom', 'geometry')
-    .toPandas()
-)
-# load geometry for plotting
-pdf_volume['geometry'] = pdf_volume['geometry'].apply(lambda x: wkt.loads(x))
-
-# load geometry for NEW YORK state; convert to geometry presentation format
-pdf_shape_states = (spark.read.format('delta').load(CREDENTIALS['paths']['geometry_state'])
-    .filter(F.col('stusps')==F.lit('NY'))
-    .toPandas()
-)
-pdf_shape_states['geometry'] = pdf_shape_states['geometry'].apply(lambda x: wkt.loads(x))
-
-# plot the new zone + disparity
-shape_plot_map(pdf_profit, 
-               col_viz='delta_volume', gdf_background=pdf_shape_states, zscore=True,
-               txt_title=f"Ride Volume Change for Debiased Zones (%)")
-shape_plot_map(pdf_profit, 
-               col_viz='delta_profit', gdf_background=pdf_shape_states, zscore=True,
-               txt_title=f"Volume Change for Debiased Zones (%)")
-
 
 # COMMAND ----------
 
@@ -307,6 +288,7 @@ pdf_shape_states['geometry'] = pdf_shape_states['geometry'].apply(lambda x: wkt.
 list_viz = [["Ethnic Debiasing", f'nyctaxi_debias_ethnc_grp'], ["Base Model", f'nyctaxi_h3_learn_base']]
 for (graph_name, data_path) in list_viz:
     path_read = CREDENTIALS['paths'][data_path]
+    df_zone_predict = spark.read.format('delta').load(path_read)
 
     # note that there is some column renaming to perform first...
     row_stat_rides = df_zone_predict.select(F.mean('volume').alias('mean'), F.stddev('volume').alias('std')).collect()[0]
@@ -337,297 +319,91 @@ for (graph_name, data_path) in list_viz:
 
 # COMMAND ----------
 
-display(df_predict)
-
-# COMMAND ----------
-
 # MAGIC %md
-# MAGIC # Incomplete Work Ahead
-# MAGIC <img src='https://images.pexels.com/photos/211122/pexels-photo-211122.jpeg?cs=srgb&dl=pexels-fernando-arcos-211122.jpg&fm=jpg&w=640&h=426' width='300px' title="Data Under Construction" />
+# MAGIC ### Hey, nothing changed!
+# MAGIC Don't worry, your eyes aren't deceiving you....
+# MAGIC 1. The majority of predicted zones had no little or no impact
+# MAGIC 2. The significant changes across the zones are mostly **decreased** effects (e.g. deeper blue/near zero) changes.
+# MAGIC 3. (A subtlety) The modified model here is just built to debias ethnic differences, not income or others.
 # MAGIC 
-# MAGIC In the end, we dec!
+# MAGIC Luckily, that means the debias worked at a macro-level (aka the devil's in the details)
+# MAGIC * We built a model to closely align to our historical predictions and we've configured our debiasing to try to maintain equality across both the rate of bias improvement and the overall performance rate.  
+# MAGIC * If there are questions about model performance, we can re-verify by looking back to the section "Clean model tuning"
+# MAGIC 
+# MAGIC To demonstrate, let's take a focused look at only the zones **most effected** by the debiasing activiy.
 
 # COMMAND ----------
 
-str_quit = f"Notebook temporarily disabled to fix some final data issues, please come back again!"
-dbutils.notebook.exit(str_quit)
-
-# COMMAND ----------
-
-if False:   # apply classification
-    # group by date, zone
-    path_read = CREDENTIALS['paths']['nyctaxi_geo_labeled']
-    df_labeled = spark.read.format('delta').load(path_read)   # save on compute
-
-    # pull out our test data from the labeled dataset
-    df_valid = df_labeled.filter(F.col('dataset')==F.lit('validate'))
-    df_valid_pred = model_predict(df_valid, "taxi_popular")
-
-col_disparity_ind = 'needs_mitigation'
-col_disparity_type = 'needs_mitigation_value'
-factor_active = 'ethnc_grp'
-class_privilaged = '(privileged)'
-pdf_valid_pred = None
-
-from pyspark.sql.window import Window
-import datetime as dt
-
-winZone = Window.partitionBy('zone', 'factor').orderBy(F.col('count').desc())
-df_debias_zone = (
-    spark.read.format('delta').load(CREDENTIALS['paths']['demographics_disparity_base'])
-    .withColumn('top_demo_flag', F.when(F.col('value')==F.first('value').over(winZone), F.lit(1)).otherwise(F.lit(0)))
-#     .filter(F.col('factor')==F.lit(factor_active))   # limit to current factor
-)
-winZone = Window.partitionBy('factor').orderBy(F.col('zone_majority').desc())
-df_debias_zone_top = (df_debias_zone
-    .groupBy('factor', 'value').agg(
-        F.sum(F.col('top_demo_flag')).alias('zone_majority')    
-    )
-    .withColumn('top_demo_value', F.first('value').over(winZone))
-    .join(df_debias_zone, ['factor', 'value'])
-    .withColumn(col_disparity_ind, F.when(F.col('top_demo_value')!=F.col('value'), F.lit(0)).otherwise(1))   # generate binary
-    .withColumn(col_disparity_type, F.when(F.col('top_demo_value')!=F.col('value'), F.lit(F.col('value'))).otherwise(class_privilaged))   # retain souce
-)
-
-
-display(df_debias_zone_top)
-
-if True:
-#     df_debias_zone = (
-#         spark.read.format('delta').load(CREDENTIALS['paths']['demographics_disparity_base'])
-#         .filter(F.col('factor')==F.lit(factor_active))   # limit to current factor
-#         .withColumn(col_disparity_ind, F.when(F.col('overall_quantile')==F.lit(1), F.lit(1)).otherwise(0))   # generate binary
-#         .withColumn(col_disparity_type, F.when(F.col('overall_quantile')==F.lit(1), F.lit(F.col('value'))).otherwise(class_privilaged))   # retain souce
-#         .select('zone', col_disparity_ind, col_disparity_type)  # keep cols of interest
-#         .orderBy(F.col(col_disparity_ind).desc())  # sort for de-dup
-#         .dropDuplicates(['zone'])
-#     )
-
-    df_valid_pred_debias = (df_valid_pred
-        .select('is_top_probability', 'is_top_predict', 'is_top', 'pickup_zone')
-        .withColumnRenamed('pickup_zone', 'zone')
-        .join(df_debias_zone_top.select('zone', 'needs_mitigation', 'needs_mitigation_value'), ['zone'])
-        #.orderBy(F.col(col_disparity_ind).desc())                  
-    )
-    display(df_valid_pred_debias.limit(100))
-#     pdf_valid_pred = (df_valid_pred_debias                 
-#         .toPandas()
-#         .set_index(col_disparity_type)
-#     )
-#     display(df_valid_pred_debias)
-
-if pdf_valid_pred is not None:
-    # pdf_valid_pred = pdf_valid_pred.set_index(col_disparity_type)
-    print(pdf_valid_pred)
-    par_gap = statistical_parity_difference(pdf_valid_pred['is_top'], pdf_valid_pred['is_top_predict'], 
-                                            prot_attr=col_disparity_type, priv_group=class_privilaged, pos_label=1)
-
-    #     score = balanced_accuracy_score(pdf_train.set_index(col_protected)['is_top'], pdf_train['is_top_probability'].astype('int'))
-    fn_log(f"Parity gap equals {par_gap:.2%}")
-
-
-# COMMAND ----------
-
-from pyspark.sql.window import Window
-import datetime as dt
-
-winZone = Window.partitionBy('zone', 'factor').orderBy(F.col('count').desc())
-df_debias_zone = (
-    spark.read.format('delta').load(CREDENTIALS['paths']['demographics_disparity_base'])
-    .withColumn('top_demo_flag', F.when(F.col('value')==F.first('value').over(winZone), F.lit(1)).otherwise(F.lit(0)))
-#     .filter(F.col('factor')==F.lit(factor_active))   # limit to current factor
-)
-display(df_debias_zone)
-# winZone = Window.partitionBy('factor').orderBy(F.col('zone_majority').desc())
-# df_debias_zone_top = (df_debias_zone
-#     .groupBy('factor', 'value').agg(
-#         F.sum(F.col('top_demo_flag')).alias('zone_majority')    
-#     )
-#     .withColumn('top_demo_value', F.first('value').over(winZone))
-#     .join(df_debias_zone, ['factor', 'value'])
-#     .withColumn(col_disparity_ind, F.when(F.col('top_demo_value')!=F.col('value'), F.lit(0)).otherwise(1))   # generate binary
-#     .withColumn(col_disparity_type, F.when(F.col('top_demo_value')!=F.col('value'), F.lit(F.col('value'))).otherwise(class_privilaged))   # retain souce
-# )
-# display(df_debias_zone_top)
-
-# COMMAND ----------
-
-
-
-# COMMAND ----------
-
-if True:
-
-
-
-    # get a transformer to convert text zone into numeric feature
-    trans_zone = StringIndexer(inputCol='zone', outputCol='zone_id').fit(df_demos_mitigate)
-    df_demos_mitigate = trans_zone.transform(df_demos_mitigate)
-
-    # what's it look like after?
-    display(df_demos_mitigate)
-    
-    # split to train/test on validation
-    from sklearn.model_selection import train_test_split
-    pdf_samples = df_demos_mitigate.drop('zone').toPandas()    
-    
-    
-    # pdf_reset = pdf_train.set_index(col_protected, drop=False)
-    from sklearn.metrics import accuracy_score, balanced_accuracy_score
-    col_label = 'is_top'
-    col_protected = 'needs_mitigation'
-    col_predicted = 'is_top_probability'
-
-    pdf_samples['no_predict'] = 1 - pdf_samples[col_predicted]
-    pdf_train, pdf_test = train_test_split(pdf_samples, test_size=.3)
-    print(list(pdf_train.columns))
-    pdf_train = pdf_train.set_index(col_protected)
-    pdf_test = pdf_test.set_index(col_protected)
-    
-    
-    
-    
-    
-#     score = discrimination(pdf_train.set_index(col_protected)['is_top'], pdf_train['is_top_probability'], prot_attr=col_protected)
-#     print(score)
-#     score = balanced_accuracy_score(pdf_train.set_index(col_protected)['is_top'], pdf_train['is_top_probability'].astype('int'))
-#     print(score)
-
-#     print(pdf_train.head(10))
-    # consider investigating more - https://github.com/Trusted-AI/AIF360/blob/master/examples/sklearn/demo_fairadapt_sklearn.ipynb
-    # pdf_train = df_demos_mitigate.sample(0.6)
-    # pdf_test = df_demos_mitigate.join(df_train, ['zone'], 'leftanti')
-
-    # from aif360.sklearn.postprocessing import CalibratedEqualizedOdds
-    pp = CalibratedEqualizedOdds(col_protected, cost_constraint='weighted', random_state=42)
-    # ceo = PostProcessingMeta(estimator=lr, postprocessor=pp, random_state=42)
-    pp.fit(pdf_train[['no_predict', col_predicted]], pdf_train[col_label])
-    
-    y_pred_zone = pp.predict(pdf_test[['no_predict', col_predicted]])
-    y_proba_zone = pp.predict_proba(pdf_test[['no_predict', col_predicted]])
-    
-    pdf_test['pred_equal'] = y_pred_zone
-    pdf_test['prob_equal'] = y_proba_zone[:,-1]
-    print(pdf_test[[col_predicted, col_label, 'pred_equal']])
-    
-    
-    
-    
-#     col_disparity_ind = 'needs_mitigation'
-#     col_disparity_type = 'needs_mitigation_value'
-
-#     par_gap = statistical_parity_difference(pdf_test[col_label], pdf_test[col_predicted], 
-#                                             prot_attr=col_disparity_ind, priv_group=0, pos_label=1)
-
-#     score = balanced_accuracy_score(pdf_test[col_label], pdf_test[col_predicted])
-#     fn_log(f"Parity gap equals {par_gap:.2%}")
-#     score = balanced_accuracy_score(pdf_test[col_label], pdf_test['pred_equal'])
-#     fn_log(f"Parity gap equals {par_gap:.2%}")
-    
-    
-    # df_disparity = taxi_zone_demo_disparities('hshld_incme_grp', quantile_size=10)
-    # df_disparity = taxi_zone_demo_disparities('ethnc_grp', quantile_size=10)
-
-    # plot gains / losses for each demographic (choose top N?)
-    # (repeat) add pre-filtering by sampling, measure + plot gains
-    # (repeat) add post-filtering by bias, measure + plot gains
-    # (repeat) add pre-processing for feature adjustment by bias, measure + plot gains
-    # 
-
-# COMMAND ----------
-
-# group by date, zone
-path_read = CREDENTIALS['paths']['nyctaxi_geo_labeled']
-
-# use the raw training data
-df_train = (
-    spark.read.format('delta').load(path_read)   # save on compute
-    .filter(F.col('dataset')==F.lit('train'))   # filter for training data
+# compute the gains by volume and profit wihtin model
+df_debias = (spark.read.format('delta').load(CREDENTIALS['paths'][f'nyctaxi_debias_ethnc_grp'])
+    .withColumn('delta_volume', F.col('volume_top') - F.col('volume'))
+    .withColumn('delta_abs_volume', F.abs(F.col('delta_volume')))
+    .withColumn('delta_profit', F.col('sum_top') - F.col('sum'))
+    .withColumn('delta_abs_profit', F.abs(F.col('delta_profit')))
     .withColumnRenamed('pickup_zone', 'zone')
-    .join(df_demos_aux, ['zone'])  # join only aux demo features
-    .drop('overall_quantile')
-)
-display(df_train)
-
-df_test = (
-    spark.read.format('delta').load(path_read)   # save on compute
-    .filter(F.col('dataset')==F.lit('test'))   # filter for training data
-    .withColumnRenamed('pickup_zone', 'zone')
-    .join(df_demos_aux, ['zone'])  # join only aux demo features
-    .drop('overall_quantile')
 )
 
-# JOIN AGAINST AUX DATA
-# TRANSFORM THE 'needs_mitigation' label into a weight
+# how many "most effected" zones (for more and fewer rides) shall we plot?
+num_extreme = 20
 
+pdf_profit = (
+    df_debias.orderBy(F.col('delta_profit').desc()).limit(num_extreme)
+    .union(df_debias.orderBy(F.col('delta_profit').asc()).limit(num_extreme))
+    .join(spark.read.format('delta').load(CREDENTIALS['paths']['geometry_nyctaxi'])  # add shape data
+          .select('zone', 'the_geom'), ['zone'])
+    .withColumnRenamed('the_geom', 'geometry')
+    .toPandas()
+)
+pdf_profit['geometry'] = pdf_profit['geometry'].apply(lambda x: wkt.loads(x))
 
+pdf_volume = (
+    df_debias.orderBy(F.col('delta_volume').desc()).limit(num_extreme)
+    .union(df_debias.orderBy(F.col('delta_volume').asc()).limit(num_extreme))
+    .join(spark.read.format('delta').load(CREDENTIALS['paths']['geometry_nyctaxi'])  # add shape data
+          .select('zone', 'the_geom'), ['zone'])
+    .withColumnRenamed('the_geom', 'geometry')
+    .toPandas()
+)
+# load geometry for plotting
+pdf_volume['geometry'] = pdf_volume['geometry'].apply(lambda x: wkt.loads(x))
 
-# COMMAND ----------
+# load geometry for NEW YORK state; convert to geometry presentation format
+pdf_shape_states = (spark.read.format('delta').load(CREDENTIALS['paths']['geometry_state'])
+    .filter(F.col('stusps')==F.lit('NY'))
+    .toPandas()
+)
+pdf_shape_states['geometry'] = pdf_shape_states['geometry'].apply(lambda x: wkt.loads(x))
 
-# col_label, list_features = taxi_train_columns()
-
-# list_out = [df_train.colRegex(f"`({factor_active}.*)`")]
-# print(list_out)
-
-# COMMAND ----------
-
-# col_label, list_features = taxi_train_columns()
-
-# list_feats_aux += [df_train.colRegex(f"`^{factor_active}.*`")]
-
-    
-# # pull out our test data from the labeled dataset
-# path_read = CREDENTIALS['paths']['nyctaxi_geo_labeled']
-# df_labeled = spark.read.format('delta').load(path_read)
-# df_test = df_labeled.filter(F.col('dataset')==F.lit('test'))
-
-# experienced mode derivation of data (about 15-25m)
-#    this code will actually train a new model based on the input `list_features` using the label `col_label`
-#    this code should be generic enough for you to reuse in your own 
-if CREDENTIALS['constants']['EXPERIENCED_MODE'] and CREDENTIALS['constants']['WORKSHOP_ADMIN_MODE']:
-    col_label, list_features = taxi_train_columns()
-
-    # comprehensive check for impact by data size
-    # list_ratio_test = [0.05, 0.5, 0.8]
-    list_ratio_test = [0.05]   # we tried several sample ratios and they were all about the same
-    for sample_ratio in list_ratio_test:
-        df_train = (
-            df_labeled.filter(F.col('dataset')==F.lit('train'))
-            .select(list_features+[col_label])
-            .sample(sample_ratio, seed=42)
-        )
-        # the first line searches for best parameters (set num_folds=1 to skip the search)
-        pipeline, best_hyperparam = modeling_gridsearch(df_train, col_label, num_folds=3)
-        # these lines actually train the model
-        best_hyperparam['training_fraction'] = sample_ratio
-        run_name, df_pred = modeling_train(df_train, df_test, col_label, "taxi_popular", 
-                                           pipeline, best_hyperparam, list_inputs=list_features)
-
-        
-        
+# plot the new zone + disparity
+shape_plot_map(pdf_profit, 
+               col_viz='delta_volume', gdf_background=pdf_shape_states, zscore=False,
+               txt_title=f"Ride Volume Change for {num_extreme*2} Most Effected Debiased Zones (count)")
+shape_plot_map(pdf_profit, 
+               col_viz='delta_profit', gdf_background=pdf_shape_states, zscore=False,
+               txt_title=f"Gross Profit Change for {num_extreme*2} Most Effected Debiased Zones ($)")
 
 
 # COMMAND ----------
 
 # MAGIC %md
-# MAGIC ## Backup Mitigation Work
-# MAGIC Unfortunately, we couldn't quite get the AIF360 library to work correctly with our data.  So for now,
-# MAGIC pieces of code are frozen below, but are not used in our evaluation.
+# MAGIC ### Nuanced Improvements
+# MAGIC So, it looks like the debiased model did effect some zones.
+# MAGIC * Very high volume areas in Manhattan (to a large extent) realized a decrease in volume
+# MAGIC * JFK airport (to a lesser extent) realized a decrease in volume
+# MAGIC * Various sub-zones in all boroughs received some minor increases
+# MAGIC 
+# MAGIC So, **Mission Accomplished**? Maybe!
+# MAGIC 
+# MAGIC The last lesson bias mitigation is circling back to your stakeholder to make sure they are satisfied with the changes and offer alternatives for other solutions.
 
 # COMMAND ----------
 
-# from pyspark.ml.tuning import CrossValidatorModel
-# cvModel = CrossValidatorModel.read().load('/users/ez2685/cvmodel')
-# print(cvModel.extractParamMap())
-
-# COMMAND ----------
-
-# load raw geo
-# predict the locations that will be most profitable morning / afternoon / evening on days of week
-# generate model that predicts by areas
-
-# overlay biggest demographic classes by age or race or income
-# compare disparities for evening pickups
-
-# solution 1 - create model to better sample
-# solution 2- postfix to hit min score
+# MAGIC %md
+# MAGIC # Wrap-up
+# MAGIC That's it for this notebook and learning model debiasing, what did we learn?
+# MAGIC 
+# MAGIC * Debiasing models and data is not trivial, but there are common places to look: proxy variables, egregious oversights, protected classes, etc. 
+# MAGIC * We trained a model to adapt the output of our prior historical prediction model.
+# MAGIC * For the technically curious, we used the built-in model tracking utility (mlflow) to largely save and restore our models for future use.  For those newer to the process, this methodical tracking may take a few more function calls, but it will prevent a lot of headaches!
+# MAGIC 
+# MAGIC If you still want more, head over to the interactive notebook **10_interactive_demos** to explore impacts of our various models or start to populate the BYO skeleton in **90_byo_experiment**.  
