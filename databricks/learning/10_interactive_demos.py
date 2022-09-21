@@ -53,6 +53,15 @@ dict_map = [[0, 'ethnc_grp', 'Ethnicity'], [1, 'hshld_incme_grp', "HH Income"], 
             [5, 'ethnic_sub_grp', 'Ethnic Sub Group'], [6, 'gndr', 'Gender']]
 df_mapping = spark.createDataFrame(pd.DataFrame(dict_map, columns=['priority', 'factor', 'factor_name']))
 
+# make demographic drop down
+list_demos = list(df_mapping.orderBy(F.col('priority')).select('factor_name').toPandas()['factor_name'])
+dbutils.widgets.dropdown("demographic", list_demos[0], list_demos)
+
+# make impact dropdown
+list_effect_focus = [['All Zones', 1e6], ['Top 80% Effected Zones', 8], 
+                     ['Top 30% Effected Zones', 3], ['Top 10% Effected Zones', 1], ]
+dbutils.widgets.dropdown("zone_effect", list_effect_focus[0][0], [x[0] for x in list_effect_focus])
+
 fn_log("Loading factorized demographics by zone...")
 df_demos_pivot_all = (spark.read.format('delta').load(CREDENTIALS['paths']['demographics_factors'])
     .join(df_mapping, ['factor'])
@@ -71,13 +80,12 @@ pdf_shape_states = (spark.read.format('delta').load(CREDENTIALS['paths']['geomet
 )
 pdf_shape_states['geometry'] = pdf_shape_states['geometry'].apply(lambda x: wkt.loads(x))
 
-# make demographic drop down
-list_demos = list(df_mapping.orderBy(F.col('priority')).select('factor_name').toPandas()['factor_name'])
-dbutils.widgets.dropdown("demographic", list_demos[0], list_demos)
 
 
 
 # COMMAND ----------
+
+from pyspark.sql.window import Window
 
 # update ride count by the currently selected model
 model_sel = dbutils.widgets.get("model")
@@ -85,12 +93,13 @@ if model_sel_last != model_sel:   # avoid recompute if model didn't chage
     model_path = [x[1] for x in list_model_map if x[0]==model_sel][0]  # find the path part of selected model
     model_sel_viz = [x[2] for x in list_model_map if x[0]==model_sel][0]  # find the graph title part
     fn_log(f"Updating to new model {model_sel}... ({model_path})")
-    model_sel_last = model_sel
     if model_path is None:  # if no ride count, just create zero z-score for disparity
         df_rides = df_demos_pivot_all.select('zone').withColumn('rides_z', F.lit(0))
+
     else:   # otherwise, compute z-score for disparity measure
         path_read = CREDENTIALS['paths'][model_path]
-        df_rides = spark.read.format('delta').load(path_read)
+        # load data and cache (**Note use 'cache' sparingly, but we benefit largely here**)
+        df_rides = spark.read.format('delta').load(path_read).cache()
         # note that there is some column renaming to perform first...
         row_stat_rides = df_rides.select(F.mean('volume').alias('mean'), F.stddev('volume').alias('std')).collect()[0]
         df_rides = (df_rides
@@ -99,15 +108,23 @@ if model_sel_last != model_sel:   # avoid recompute if model didn't chage
             .withColumnRenamed('volume', 'rides')
             .select('zone', 'rides', 'rides_z')
         )
+    model_sel_last = model_sel
     # recompute the demo-based counts by ride scalar
     df_demos_pivot = df_demos_pivot_all.join(df_rides, ['zone'])
 
-# Complete for visilzuation    
+# Complete for visualization    
 demo_sel = dbutils.widgets.get("demographic")
 
+# grab the selected zone effect
+focus_sel = dbutils.widgets.get("zone_effect")
+focus_limit = int([x[1] for x in list_effect_focus if x[0]==focus_sel][0])
+
 # now we'll join against shapes to plot
+winDecile =  Window.partitionBy('value').orderBy(F.col('rides_z').desc())    
 pdf_plot_demo = (df_demos_pivot
     .filter(F.col('factor_name') == F.lit(demo_sel))
+    .withColumn('decile', F.ntile(10).over(winDecile))
+    .filter(F.col('decile') <= F.lit(focus_limit))
     .join(df_shape_tlc.select('zone', 'the_geom'), ['zone'])
     .withColumn('count_log10', F.log(10.0, F.col('count')))
     .toPandas()
@@ -116,7 +133,7 @@ pdf_plot_demo['geometry'] = pdf_plot_demo['the_geom'].apply(lambda x: wkt.loads(
 
 shape_plot_map_factors(pdf_plot_demo, col_factor='value', col_viz='count_log10', use_log=True,
                        txt_title=f"{demo_sel} {model_sel_viz} by Zone (%)", col_norm='zone',
-                       col_disparity='rides_z', gdf_background=pdf_shape_states)
+                       col_disparity='rides_z', gdf_background=pdf_shape_states, verbose=False)
 
 # COMMAND ----------
 

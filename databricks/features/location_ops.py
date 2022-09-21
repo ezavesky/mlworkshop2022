@@ -78,7 +78,7 @@ def shape_plot_example(gdf_example=None, res_compare=[7, 9, 11], col_viz=None):
 # COMMAND ----------
 
 # helper to demonstrate simple plot of a single map...
-def shape_plot_map(gdf_data, col_viz=None, txt_title='original plot', gdf_background=None, zscore=False):
+def shape_plot_map(gdf_data, col_viz=None, txt_title='original plot', gdf_background=None, zscore=False, verbose=False):
     from h3ronpy import vector, util
 
     # original source - https://towardsdatascience.com/uber-h3-for-data-analysis-with-python-1e54acdcc908
@@ -100,7 +100,8 @@ def shape_plot_map(gdf_data, col_viz=None, txt_title='original plot', gdf_backgr
     else:
         gdf_copy.plot(ax=axis)
     axis.set_title(txt_title)
-    fn_log(f"[shape_plot_map] Input columns: {gdf_copy.columns}")
+    if verbose:
+        fn_log(f"[shape_plot_map] Input columns: {gdf_copy.columns}")
     
     # adjust extents of the graph to only include main data
     if gdf_background is not None:
@@ -120,7 +121,7 @@ def delta_zscore_pandas(x1, x2):
 # helper to plot the variants of one population...
 def shape_plot_map_factors(gdf_data, col_factor, col_viz, txt_title='original plot', 
                            use_log=True, col_norm=None, col_disparity=None, gdf_background=None,
-                           zscore=False):
+                           zscore=False, verbose=False):
     """
     Kind of a complicated shape-plotting method.  It takes an input pandas DataFrame, does a grouping
     by the column `col_factor` and plots values in `col_viz`.  Optionally, you can apply a normalization
@@ -191,7 +192,10 @@ def shape_plot_map_factors(gdf_data, col_factor, col_viz, txt_title='original pl
     
     xmin = gdf_copy[col_viz].min()
     xmax = gdf_copy[col_viz].max()
-    fn_log(f"[shape_plot_map] Input columns: {gdf_copy.columns}; factors: {dict_factors}; extents [{xmin}, {xmax}]")
+    if verbose:
+        fn_log(f"[shape_plot_map_factors] Input columns: {gdf_copy.columns}; factors: {dict_factors}; extents [{xmin}, {xmax}]")
+    else:
+        fn_log(f"[shape_plot_map_factors] Input factors: {dict_factors}; extents [{xmin}, {xmax}]")
 
     # original source - https://towardsdatascience.com/uber-h3-for-data-analysis-with-python-1e54acdcc908
     figure, axis = plt.subplots(2, 2, figsize=(16, 12))
