@@ -40,6 +40,9 @@ dbutils.widgets.removeAll()
 list_model_map = [['Raw Demographics (n1.e5)', None, 'Difference'], 
                   ['Cleaned Raw Data (n2.e6)', 'nyctaxi_h3_historical', 'Ride Disparity'],
                   ['Base Predicted Model (n2.e7)', 'nyctaxi_h3_learn_base', 'Ride Disparity'],
+                  ['Ethnic Debiased Model (n3.e9)', 'nyctaxi_debias_ethnc_grp', 'Ride Disparity'],
+                  ['Income Debiased Model (n3.e9)', 'nyctaxi_debias_hshld_incme_grp', 'Ride Disparity'],
+                  ['Education Debiased Model (n3.e9)', 'nyctaxi_debias_edctn', 'Ride Disparity'],
                  ]
 model_sel_last = None
 dbutils.widgets.dropdown("model", list_model_map[0][0], [x[0] for x in list_model_map])

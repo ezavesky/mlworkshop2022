@@ -170,6 +170,9 @@ CREDENTIALS['paths'].update({
     'nyctaxi_h3_historical': f"{CREDENTIALS['paths']['databricks_dataset']}/experiment/nyctaxi_h3_historical",  # zone agg data (test only)
     'nyctaxi_h3_learn_base': f"{CREDENTIALS['paths']['databricks_dataset']}/experiment/nyctaxi_h3_learn_base",  # zone agg data (base learning)
     'nyctaxi_h3_learn_sample': f"{CREDENTIALS['paths']['databricks_dataset']}/experiment/nyctaxi_h3_learn_sample",  # 
+    'nyctaxi_debias_ethnc_grp': f"{CREDENTIALS['paths']['databricks_dataset']}/experiment/nyctaxi_h3_lean_ethnc_grp",  # (learn ethnic debias)
+    'nyctaxi_debias_hshld_incme_grp': f"{CREDENTIALS['paths']['databricks_dataset']}/experiment/nyctaxi_h3_lean_hshld_incme_grp",  # (learn income debias)
+    'nyctaxi_debias_edctn': f"{CREDENTIALS['paths']['databricks_dataset']}/experiment/nyctaxi_h3_lean_edctn",  # (learn education debias)
 })
 
 # need to have time constants restructed?
